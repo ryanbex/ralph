@@ -238,6 +238,60 @@ get_question() {
     fi
 }
 
+# Get metrics for a workstream
+get_metrics() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local metrics_file="${state_dir}/metrics.json"
+
+    if [[ -f "$metrics_file" ]]; then
+        cat "$metrics_file"
+    else
+        echo '{"tokens_in":0,"tokens_out":0,"total_cost":0,"start_time":"","max_iterations":0,"iterations_completed":0}'
+    fi
+}
+
+# Format token count for display
+format_tokens() {
+    local count=$1
+    if [[ $count -ge 1000000 ]]; then
+        printf "%.1fM" "$(echo "$count / 1000000" | bc -l)"
+    elif [[ $count -ge 1000 ]]; then
+        printf "%.1fK" "$(echo "$count / 1000" | bc -l)"
+    else
+        echo "$count"
+    fi
+}
+
+# Format duration from start time
+format_duration() {
+    local start_time=$1
+    if [[ -z "$start_time" || "$start_time" == "null" || "$start_time" == "" ]]; then
+        echo "-"
+        return
+    fi
+    # Parse ISO 8601 timestamp and calculate diff
+    local start_sec now_sec diff
+    start_sec=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$start_time" +%s 2>/dev/null || echo 0)
+    now_sec=$(date +%s)
+    diff=$((now_sec - start_sec))
+
+    if [[ $diff -lt 0 || $start_sec -eq 0 ]]; then
+        echo "-"
+        return
+    fi
+
+    if [[ $diff -ge 3600 ]]; then
+        printf "%dh %dm" $((diff/3600)) $(((diff%3600)/60))
+    elif [[ $diff -ge 60 ]]; then
+        printf "%dm" $((diff/60))
+    else
+        printf "%ds" $diff
+    fi
+}
+
 #═══════════════════════════════════════════════════════════════
 # UI Functions
 #═══════════════════════════════════════════════════════════════
@@ -762,36 +816,74 @@ cmd_status() {
         return 1
     fi
 
-    echo ""
-    echo -e "${BOLD}Ralph Workstreams - ${project}${NC}"
-    echo "=============================="
-    echo ""
-
     local workstreams
     workstreams=($(get_workstreams "$project"))
 
     if [[ ${#workstreams[@]} -eq 0 ]]; then
+        echo ""
+        echo -e "${BOLD}Ralph Workstreams - $project${NC}"
+        echo "=============================="
+        echo ""
         echo "No workstreams running"
         echo ""
         echo "Start one with: ralph -p $project start <name>"
         return
     fi
 
-    for ws in "${workstreams[@]}"; do
-        local status iter icon question
-        status=$(get_status "$project" "$ws")
-        iter=$(get_iteration "$project" "$ws")
-        icon=$(status_icon "$status")
-        question=$(get_question "$project" "$ws")
+    # Table header
+    echo ""
+    printf "┌────────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
+    printf "│ %-18s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
+           "Workstream" "Status" "Progress" "Tokens" "Cost" "Duration"
+    printf "├────────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
 
-        echo -e "  ${BOLD}${ws}${NC}"
-        echo -e "    Status: ${icon} ${status}"
-        echo -e "    Iteration: ${iter}"
-        if [[ -n "$question" ]]; then
-            echo -e "    ${YELLOW}Question: ${question}${NC}"
-        fi
-        echo ""
+    for ws in "${workstreams[@]}"; do
+        local status iteration metrics
+        status=$(get_status "$project" "$ws")
+        iteration=$(get_iteration "$project" "$ws")
+        metrics=$(get_metrics "$project" "$ws")
+
+        local max_iter tokens_in tokens_out total_tokens cost start_time
+        max_iter=$(echo "$metrics" | jq -r '.max_iterations // 100')
+        tokens_in=$(echo "$metrics" | jq -r '.tokens_in // 0')
+        tokens_out=$(echo "$metrics" | jq -r '.tokens_out // 0')
+        total_tokens=$((tokens_in + tokens_out))
+        cost=$(echo "$metrics" | jq -r '.total_cost // 0')
+        start_time=$(echo "$metrics" | jq -r '.start_time // ""')
+
+        local progress_pct=0
+        [[ $max_iter -gt 0 ]] && progress_pct=$((iteration * 100 / max_iter))
+
+        local tokens_fmt cost_fmt duration_fmt progress_fmt
+        tokens_fmt=$(format_tokens "$total_tokens")
+        cost_fmt=$(printf "\$%.2f" "$cost")
+        duration_fmt=$(format_duration "$start_time")
+        progress_fmt=$(printf "%2d/%-3d %2d%%" "$iteration" "$max_iter" "$progress_pct")
+
+        # Status with color (8 chars max for column)
+        local status_display
+        case "$status" in
+            RUNNING)     status_display="${GREEN}RUNNING${NC}" ;;
+            COMPLETE)    status_display="${GREEN}COMPLETE${NC}" ;;
+            STOPPED)     status_display="${DIM}STOPPED${NC}" ;;
+            NEEDS_INPUT) status_display="${YELLOW}NEEDS_IN${NC}" ;;
+            STUCK)       status_display="${RED}STUCK${NC}" ;;
+            ERROR)       status_display="${RED}ERROR${NC}" ;;
+            *)           status_display="$status" ;;
+        esac
+
+        # Print row - use printf with -e for color codes
+        printf "│ %-18s │ " "$ws"
+        printf "${status_display}"
+        # Pad status column (8 chars visible, but colors add invisible chars)
+        local visible_len=${#status}
+        local pad=$((8 - visible_len))
+        printf "%${pad}s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
+               "" "$progress_fmt" "$tokens_fmt" "$cost_fmt" "$duration_fmt"
     done
+
+    printf "└────────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
+    echo ""
 }
 
 cmd_attach() {

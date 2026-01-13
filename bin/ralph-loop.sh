@@ -98,6 +98,12 @@ set_status() {
     echo "$1" > "$STATUS_FILE"
 }
 
+# Check if workstream is marked complete
+is_complete() {
+    local progress_file="${1:-$PROGRESS_FILE}"
+    [[ -f "$progress_file" ]] && grep -qiE "^## Status: (COMPLETE|DONE|FINISHED)" "$progress_file"
+}
+
 # Check if auto_merge is enabled
 is_auto_merge_enabled() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -239,6 +245,56 @@ set_iteration() {
     echo "$1" > "$ITERATION_FILE"
 }
 
+# Initialize metrics tracking
+init_metrics() {
+    local metrics_file="$STATE_DIR/metrics.json"
+    cat > "$metrics_file" << EOF
+{
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "total_cost": 0.00,
+  "start_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "max_iterations": $MAX_ITERATIONS,
+  "iterations_completed": 0
+}
+EOF
+}
+
+# Update metrics after each iteration
+update_metrics() {
+    local log_output="$1"
+    local metrics_file="$STATE_DIR/metrics.json"
+
+    # Parse token counts from Claude Code output
+    # Look for patterns like "Input: 12345 tokens" or "tokens in: 12345"
+    local new_tokens_in new_tokens_out new_cost
+    new_tokens_in=$(echo "$log_output" | grep -oE '[0-9,]+\s*(input|in)\s*tokens?' | grep -oE '[0-9,]+' | tr -d ',' | tail -1)
+    new_tokens_out=$(echo "$log_output" | grep -oE '[0-9,]+\s*(output|out)\s*tokens?' | grep -oE '[0-9,]+' | tr -d ',' | tail -1)
+    new_cost=$(echo "$log_output" | grep -oE '\$[0-9]+\.[0-9]+' | tr -d '$' | tail -1)
+
+    # Read current metrics and update
+    if [[ -f "$metrics_file" ]]; then
+        local current_in current_out current_cost iterations
+        current_in=$(jq -r '.tokens_in' "$metrics_file")
+        current_out=$(jq -r '.tokens_out' "$metrics_file")
+        current_cost=$(jq -r '.total_cost' "$metrics_file")
+        iterations=$(jq -r '.iterations_completed' "$metrics_file")
+
+        # Update with new values
+        local total_in=$((current_in + ${new_tokens_in:-0}))
+        local total_out=$((current_out + ${new_tokens_out:-0}))
+        local total_cost
+        total_cost=$(echo "$current_cost + ${new_cost:-0}" | bc)
+        local new_iterations=$((iterations + 1))
+
+        # Write updated metrics
+        jq --argjson ti "$total_in" --argjson to "$total_out" \
+           --arg tc "$total_cost" --argjson it "$new_iterations" \
+           '.tokens_in = $ti | .tokens_out = $to | .total_cost = ($tc | tonumber) | .iterations_completed = $it' \
+           "$metrics_file" > "${metrics_file}.tmp" && mv "${metrics_file}.tmp" "$metrics_file"
+    fi
+}
+
 # Commit changes in current repo or all repos (multi-repo)
 commit_changes() {
     local project_type
@@ -304,6 +360,15 @@ check_stuck() {
     if [[ "$current_hash" == "$LAST_PROGRESS_HASH" ]]; then
         STUCK_COUNTER=$((STUCK_COUNTER + 1))
         if [[ $STUCK_COUNTER -ge $STUCK_THRESHOLD ]]; then
+            # Check if actually complete before marking stuck
+            if is_complete; then
+                log "Work complete (detected via STUCK check)"
+                set_status "COMPLETE"
+                if is_auto_merge_enabled; then
+                    auto_merge && exit 0
+                fi
+                exit 0
+            fi
             warn "No progress detected for $STUCK_COUNTER iterations"
             set_status "STUCK"
             notify "Ralph Stuck" "${PROJECT}/${WORKSTREAM}: No progress for ${STUCK_COUNTER} iterations"
@@ -402,6 +467,7 @@ mkdir -p "$STATE_DIR" "$LOG_DIR"
 echo $$ > "$PID_FILE"
 set_status "RUNNING"
 set_iteration 0
+init_metrics
 LAST_PROGRESS_HASH=$(get_progress_hash)
 
 # Start logging
@@ -468,15 +534,21 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         echo "6. If all tasks complete, write '## Status: COMPLETE' to PROGRESS.md"
     } > "$CLAUDE_INPUT"
 
-    # Run Claude
+    # Run Claude and capture output for metrics
     set_status "RUNNING"
-    if cat "$CLAUDE_INPUT" | claude --dangerously-skip-permissions; then
+    local claude_output
+    claude_output=$(mktemp)
+    if cat "$CLAUDE_INPUT" | claude --dangerously-skip-permissions 2>&1 | tee "$claude_output"; then
         EXIT_CODE=0
     else
         EXIT_CODE=$?
         warn "Iteration $ITERATION exited with code $EXIT_CODE"
     fi
     rm -f "$CLAUDE_INPUT"
+
+    # Update metrics with captured output
+    update_metrics "$(cat "$claude_output")"
+    rm -f "$claude_output"
 
     # Check for errors
     if [[ $EXIT_CODE -ne 0 ]] && [[ $EXIT_CODE -ne 130 ]]; then
@@ -486,7 +558,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
 
     # Check for completion marker in PROGRESS.md
-    if [[ -f "$PROGRESS_FILE" ]] && grep -q "^## Status: COMPLETE" "$PROGRESS_FILE"; then
+    if is_complete; then
         log "Workstream marked as COMPLETE!"
         set_status "COMPLETE"
 
@@ -540,6 +612,16 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     # Brief pause between iterations
     sleep 2
 done
+
+# Check if actually complete before marking stopped
+if is_complete; then
+    log "Workstream marked as COMPLETE (reached max iterations)"
+    set_status "COMPLETE"
+    if is_auto_merge_enabled; then
+        auto_merge && exit 0
+    fi
+    exit 0
+fi
 
 log "Completed $MAX_ITERATIONS iterations"
 set_status "STOPPED"
