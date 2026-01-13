@@ -175,25 +175,19 @@ get_session_name() {
     echo "ralph-${project}-${workstream}"
 }
 
-# Get all workstreams for a project (from worktrees)
+# Get all workstreams for a project (from state directory)
 get_workstreams() {
     local project="$1"
-    local project_root
-    project_root=$(get_project_root "$project")
+    local state_base="$RALPH_HOME/state/${project}"
 
-    if [[ -z "$project_root" ]] || [[ ! -d "$project_root" ]]; then
-        return
+    # Check state directory for workstreams
+    if [[ -d "$state_base" ]]; then
+        for ws_dir in "$state_base"/*/; do
+            if [[ -d "$ws_dir" ]]; then
+                basename "$ws_dir"
+            fi
+        done
     fi
-
-    # Check git worktrees
-    cd "$project_root"
-    git worktree list 2>/dev/null | while read -r line; do
-        local branch
-        branch=$(echo "$line" | awk '{print $3}' | tr -d '[]')
-        if [[ "$branch" == ralph/* ]]; then
-            echo "${branch#ralph/}"
-        fi
-    done
 }
 
 # Get workstream status
