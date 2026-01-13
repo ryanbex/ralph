@@ -23,7 +23,7 @@ Ralph runs parallel autonomous Claude Code sessions using git worktrees and tmux
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ralph.git
+git clone https://github.com/ryanbex/ralph.git
 cd ralph
 
 # Run the installer
