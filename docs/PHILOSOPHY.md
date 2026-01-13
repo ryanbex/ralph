@@ -1,5 +1,20 @@
 # Ralph Philosophy
 
+> "That's the beauty of Ralph—the technique is deterministically bad in an undeterministic world."
+> — [Geoffrey Huntley](https://ghuntley.com/ralph/)
+
+## The Origin
+
+Ralph started as an elegantly simple idea:
+
+```bash
+while :; do cat PROMPT.md | claude-code ; done
+```
+
+This single line captures the essence: give an AI a task, let it work, repeat. No complex orchestration. No elaborate frameworks. Just a loop.
+
+This implementation extends that core pattern with infrastructure for parallel execution, persistence, and observability—but the philosophy remains the same.
+
 ## The Problem
 
 AI coding assistants have two fundamental limitations:
@@ -87,6 +102,18 @@ Ralph: [works on ralph/feature for 50 iterations]
 Human: [reviews the branch diff]
 Human: [decides to merge, or requests changes]
 ```
+
+### 7. Eventual Consistency
+
+From the original Ralph philosophy: outcomes are deterministically bad in an undeterministic world. Ralph will produce flawed output. That's expected.
+
+The key insight: **when output is wrong, refine the prompts**. Don't blame the tool. Treat it like tuning an instrument—small adjustments compound into harmony.
+
+This requires:
+- **Patience**: First iterations are rough
+- **Observation**: Watch what Ralph does wrong
+- **Refinement**: Improve PROMPT.md based on failures
+- **Faith**: Trust the process converges
 
 ## Design Decisions
 
@@ -266,8 +293,8 @@ The patterns established here—isolation, autonomy, incremental progress, human
 
 ## References
 
-- [Anthropic: How we built multi-file editing](https://www.anthropic.com/engineering/claude-code-multi-file-editing)
-- [Claude Code CLI](https://claude.ai/claude-code)
+- [Geoffrey Huntley's Ralph](https://ghuntley.com/ralph/) - The original Ralph concept
+- [Claude Code CLI](https://claude.ai/code)
 - [Git Worktrees Documentation](https://git-scm.com/docs/git-worktree)
 - [tmux Manual](https://man.openbsd.org/tmux)
 
