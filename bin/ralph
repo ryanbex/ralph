@@ -1058,6 +1058,91 @@ cmd_recover() {
     fi
 }
 
+cmd_prune() {
+    local project="$1"
+    local dry_run=false
+    local pruned=0
+
+    if [[ "$project" == "--dry-run" ]]; then
+        dry_run=true
+        project=""
+    fi
+
+    echo -e "${CYAN}Scanning for stale workstreams...${NC}"
+    echo ""
+
+    local projects_to_check=()
+    if [[ -n "$project" ]]; then
+        projects_to_check=("$project")
+    else
+        for project_file in "$RALPH_HOME/projects/"*.yaml; do
+            [[ -f "$project_file" ]] || continue
+            projects_to_check+=("$(basename "$project_file" .yaml)")
+        done
+    fi
+
+    for proj in "${projects_to_check[@]}"; do
+        local state_base="$RALPH_HOME/state/${proj}"
+        [[ -d "$state_base" ]] || continue
+
+        for ws_dir in "$state_base"/*/; do
+            [[ -d "$ws_dir" ]] || continue
+            local ws
+            ws=$(basename "$ws_dir")
+            local session
+            session=$(get_session_name "$proj" "$ws")
+            local status_file="${ws_dir}/status"
+
+            # Check if this workstream is stale:
+            # - tmux session doesn't exist
+            # - status is not RUNNING (or status file doesn't exist)
+            local is_stale=false
+            local reason=""
+
+            if ! tmux has-session -t "$session" 2>/dev/null; then
+                if [[ -f "$status_file" ]]; then
+                    local status
+                    status=$(cat "$status_file")
+                    if [[ "$status" != "RUNNING" ]]; then
+                        is_stale=true
+                        reason="stopped (status: $status)"
+                    fi
+                else
+                    is_stale=true
+                    reason="no status file"
+                fi
+            fi
+
+            if $is_stale; then
+                echo -e "  ${YELLOW}${proj}/${ws}${NC} - $reason"
+                if ! $dry_run; then
+                    rm -rf "$ws_dir"
+                    # Also clean up logs if empty
+                    local log_dir="$RALPH_HOME/logs/${proj}/${ws}"
+                    if [[ -d "$log_dir" ]]; then
+                        rm -rf "$log_dir"
+                    fi
+                    ((pruned++))
+                fi
+            fi
+        done
+
+        # Clean up empty project state directories
+        if ! $dry_run && [[ -d "$state_base" ]] && [[ -z "$(ls -A "$state_base")" ]]; then
+            rmdir "$state_base" 2>/dev/null
+        fi
+    done
+
+    echo ""
+    if $dry_run; then
+        echo -e "${DIM}Dry run - no changes made. Run without --dry-run to prune.${NC}"
+    elif [[ $pruned -gt 0 ]]; then
+        echo -e "${GREEN}Pruned $pruned stale workstream(s)${NC}"
+    else
+        echo "No stale workstreams found"
+    fi
+}
+
 #═══════════════════════════════════════════════════════════════
 # Interactive Dashboard
 #═══════════════════════════════════════════════════════════════
@@ -1433,6 +1518,7 @@ cmd_help() {
     echo -e "${CYAN}Global:${NC}"
     echo "  ralph                             Interactive dashboard"
     echo "  ralph recover                     Find orphaned workstreams"
+    echo "  ralph prune [--dry-run]           Remove stale workstream state"
     echo "  ralph help                        Show this help"
     echo ""
     echo -e "${CYAN}Server (REST API):${NC}"
@@ -1518,6 +1604,9 @@ case $COMMAND in
         ;;
     recover)
         cmd_recover
+        ;;
+    prune)
+        cmd_prune "$ARG1"
         ;;
     server)
         case ${ARG1:-help} in
