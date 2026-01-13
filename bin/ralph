@@ -1,0 +1,1553 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ralph - Global Multi-Repo Autonomous Development Orchestrator
+# Version 2.0 - Global installation with project registry
+
+RALPH_HOME="${RALPH_HOME:-$HOME/.ralph}"
+RALPH_VERSION="2.0.0"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Box drawing characters
+H_LINE="─"
+V_LINE="│"
+TL_CORNER="┌"
+TR_CORNER="┐"
+BL_CORNER="└"
+BR_CORNER="┘"
+T_RIGHT="├"
+T_LEFT="┤"
+
+#═══════════════════════════════════════════════════════════════
+# Utility Functions
+#═══════════════════════════════════════════════════════════════
+
+log() { echo -e "${GREEN}[Ralph]${NC} $1"; }
+warn() { echo -e "${YELLOW}[Ralph]${NC} $1"; }
+error() { echo -e "${RED}[Ralph]${NC} $1"; }
+
+# Send Bark push notification
+notify() {
+    local title="$1"
+    local message="$2"
+
+    if [[ -f "$RALPH_HOME/config.yaml" ]]; then
+        local bark_url
+        bark_url=$(grep -A2 "bark:" "$RALPH_HOME/config.yaml" 2>/dev/null | grep "url:" | sed 's/.*url: *"//' | sed 's/".*//' || true)
+
+        if [[ -n "$bark_url" ]]; then
+            # URL encode the message
+            local encoded
+            encoded=$(printf '%s' "$message" | jq -sRr @uri 2>/dev/null || echo "$message")
+            curl -s "${bark_url}/${title}/${encoded}" > /dev/null 2>&1 &
+        fi
+    fi
+}
+
+# Parse YAML value (simple)
+yaml_get() {
+    local file="$1"
+    local key="$2"
+    grep "^${key}:" "$file" 2>/dev/null | sed "s/^${key}: *//" | sed 's/^ *//' | sed 's/ *$//'
+}
+
+#═══════════════════════════════════════════════════════════════
+# Project Detection & Registry
+#═══════════════════════════════════════════════════════════════
+
+# Detect project from current directory
+detect_project() {
+    local cwd
+    cwd=$(pwd)
+
+    # Check all registered projects
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+
+        local root
+        root=$(yaml_get "$project_file" "root")
+
+        # Check if cwd is within project root
+        if [[ "$cwd" == "$root"* ]]; then
+            basename "$project_file" .yaml
+            return 0
+        fi
+    done
+
+    # Fallback: check if we're in a git repo
+    if git rev-parse --git-dir &>/dev/null; then
+        local git_root
+        git_root=$(git rev-parse --show-toplevel)
+        basename "$git_root"
+        return 0
+    fi
+
+    echo ""
+    return 1
+}
+
+# Get project config file path
+get_project_file() {
+    local project="$1"
+    echo "$RALPH_HOME/projects/${project}.yaml"
+}
+
+# Check if project exists
+project_exists() {
+    local project="$1"
+    [[ -f "$(get_project_file "$project")" ]]
+}
+
+# Get project root directory
+get_project_root() {
+    local project="$1"
+    local project_file
+    project_file=$(get_project_file "$project")
+    yaml_get "$project_file" "root"
+}
+
+# Get project type (single-repo or multi-repo)
+get_project_type() {
+    local project="$1"
+    local project_file
+    project_file=$(get_project_file "$project")
+    yaml_get "$project_file" "type"
+}
+
+# Get list of repos for multi-repo project
+get_project_repos() {
+    local project="$1"
+    local project_file
+    project_file=$(get_project_file "$project")
+
+    if [[ "$(get_project_type "$project")" == "multi-repo" ]]; then
+        grep -A1000 "^repos:" "$project_file" 2>/dev/null | grep "path:" | sed 's/.*path: *//' | tr -d '"' || true
+    fi
+}
+
+#═══════════════════════════════════════════════════════════════
+# Workstream Functions
+#═══════════════════════════════════════════════════════════════
+
+# Get workstream config directory
+get_workstream_dir() {
+    local project="$1"
+    local workstream="$2"
+    echo "$RALPH_HOME/workstreams/${project}/${workstream}"
+}
+
+# Get workstream state directory
+get_state_dir() {
+    local project="$1"
+    local workstream="$2"
+    echo "$RALPH_HOME/state/${project}/${workstream}"
+}
+
+# Get workstream log directory
+get_log_dir() {
+    local project="$1"
+    local workstream="$2"
+    echo "$RALPH_HOME/logs/${project}/${workstream}"
+}
+
+# Get worktree path for a workstream
+get_worktree_path() {
+    local project="$1"
+    local workstream="$2"
+    local project_root
+    project_root=$(get_project_root "$project")
+    echo "${project_root}-${workstream}"
+}
+
+# Get tmux session name
+get_session_name() {
+    local project="$1"
+    local workstream="$2"
+    echo "ralph-${project}-${workstream}"
+}
+
+# Get all workstreams for a project (from worktrees)
+get_workstreams() {
+    local project="$1"
+    local project_root
+    project_root=$(get_project_root "$project")
+
+    if [[ -z "$project_root" ]] || [[ ! -d "$project_root" ]]; then
+        return
+    fi
+
+    # Check git worktrees
+    cd "$project_root"
+    git worktree list 2>/dev/null | while read -r line; do
+        local branch
+        branch=$(echo "$line" | awk '{print $3}' | tr -d '[]')
+        if [[ "$branch" == ralph/* ]]; then
+            echo "${branch#ralph/}"
+        fi
+    done
+}
+
+# Get workstream status
+get_status() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local session
+    session=$(get_session_name "$project" "$workstream")
+
+    if [[ -f "${state_dir}/question" ]]; then
+        echo "NEEDS_INPUT"
+    elif tmux has-session -t "$session" 2>/dev/null; then
+        if [[ -f "${state_dir}/status" ]]; then
+            cat "${state_dir}/status"
+        else
+            echo "RUNNING"
+        fi
+    else
+        echo "STOPPED"
+    fi
+}
+
+# Get current iteration
+get_iteration() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+
+    if [[ -f "${state_dir}/iteration" ]]; then
+        cat "${state_dir}/iteration"
+    else
+        echo "0"
+    fi
+}
+
+# Get pending question
+get_question() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+
+    if [[ -f "${state_dir}/question" ]]; then
+        cat "${state_dir}/question"
+    fi
+}
+
+#═══════════════════════════════════════════════════════════════
+# UI Functions
+#═══════════════════════════════════════════════════════════════
+
+status_icon() {
+    case $1 in
+        RUNNING)     echo -e "${GREEN}⏵⏵${NC}" ;;
+        STOPPED)     echo -e "${DIM}⏸${NC}" ;;
+        NEEDS_INPUT) echo -e "${YELLOW}⚠️${NC}" ;;
+        STUCK)       echo -e "${RED}⏸${NC}" ;;
+        COMPLETE)    echo -e "${GREEN}✓${NC}" ;;
+        ERROR)       echo -e "${RED}✗${NC}" ;;
+        *)           echo -e "${DIM}?${NC}" ;;
+    esac
+}
+
+progress_bar() {
+    local current=$1
+    local max=$2
+    local width=15
+
+    if [[ $max -eq 0 ]]; then max=1; fi
+
+    local filled=$((current * width / max))
+    local empty=$((width - filled))
+
+    printf "${GREEN}"
+    for ((i=0; i<filled; i++)); do printf '█'; done
+    printf "${DIM}"
+    for ((i=0; i<empty; i++)); do printf '░'; done
+    printf "${NC}"
+}
+
+prompt_choice() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+
+    echo ""
+    echo -e "${BOLD}${prompt}${NC}"
+    echo ""
+
+    local i=1
+    for opt in "${options[@]}"; do
+        echo -e "  ${CYAN}${i}.${NC} ${opt}"
+        ((i++))
+    done
+    echo ""
+    echo -e "  ${DIM}c. Cancel${NC}"
+    echo ""
+
+    read -r -p "> " choice
+
+    if [[ "$choice" == "c" ]] || [[ "$choice" == "C" ]]; then
+        return 255
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
+        return $((choice - 1))
+    fi
+
+    return 255
+}
+
+prompt_yes_no() {
+    local prompt="$1"
+    local yes_desc="${2:-Proceed}"
+    local no_desc="${3:-Cancel}"
+
+    echo ""
+    echo -e "${BOLD}${prompt}${NC}"
+    echo ""
+    echo -e "  ${CYAN}1.${NC} Yes - ${yes_desc}"
+    echo -e "  ${CYAN}2.${NC} No - ${no_desc}"
+    echo ""
+
+    read -r -p "> " choice
+
+    [[ "$choice" == "1" ]] && return 0
+    return 1
+}
+
+#═══════════════════════════════════════════════════════════════
+# Projects Commands
+#═══════════════════════════════════════════════════════════════
+
+cmd_projects_list() {
+    echo ""
+    echo -e "${BOLD}Registered Projects${NC}"
+    echo "==================="
+    echo ""
+
+    local has_projects=false
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+        has_projects=true
+
+        local name root type
+        name=$(basename "$project_file" .yaml)
+        root=$(yaml_get "$project_file" "root")
+        type=$(yaml_get "$project_file" "type")
+
+        echo -e "  ${BOLD}${name}${NC}"
+        echo -e "    Root: ${CYAN}${root}${NC}"
+        echo -e "    Type: ${type:-single-repo}"
+
+        if [[ "$type" == "multi-repo" ]]; then
+            local repos
+            repos=$(get_project_repos "$name")
+            if [[ -n "$repos" ]]; then
+                echo -e "    Repos:"
+                echo "$repos" | while read -r repo; do
+                    echo -e "      - ${repo}"
+                done
+            fi
+        fi
+        echo ""
+    done
+
+    if ! $has_projects; then
+        echo "  No projects registered"
+        echo ""
+        echo "  Register a project with:"
+        echo "    cd /path/to/project && ralph projects add"
+        echo ""
+    fi
+}
+
+cmd_projects_add() {
+    local multi_repo=false
+    local project_root
+    local project_name
+
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --multi-repo|-m)
+                multi_repo=true
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    # Get project root (current directory or specified)
+    if [[ $# -gt 0 ]]; then
+        project_root="$1"
+    else
+        project_root=$(pwd)
+    fi
+
+    # Resolve to absolute path
+    project_root=$(cd "$project_root" && pwd)
+    project_name=$(basename "$project_root")
+
+    # Check if already registered
+    if project_exists "$project_name"; then
+        warn "Project '$project_name' already registered"
+        echo "Use 'ralph projects update $project_name' to update"
+        return 1
+    fi
+
+    local project_file
+    project_file=$(get_project_file "$project_name")
+
+    if $multi_repo; then
+        # Detect repos in subdirectories
+        echo -e "${CYAN}Detecting repositories in ${project_root}...${NC}"
+
+        local repos=()
+        for dir in "$project_root"/*/; do
+            if [[ -d "${dir}.git" ]] || [[ -f "${dir}.git" ]]; then
+                local repo_name
+                repo_name=$(basename "$dir")
+                repos+=("$repo_name")
+                echo -e "  Found: ${GREEN}${repo_name}${NC}"
+            fi
+        done
+
+        if [[ ${#repos[@]} -eq 0 ]]; then
+            error "No git repositories found in subdirectories"
+            echo "For single-repo projects, use: ralph projects add"
+            return 1
+        fi
+
+        # Create project file
+        cat > "$project_file" << EOF
+name: $project_name
+type: multi-repo
+root: $project_root
+base_branch: main
+repos:
+EOF
+        for repo in "${repos[@]}"; do
+            echo "  - path: $repo" >> "$project_file"
+        done
+
+        echo ""
+        echo -e "${GREEN}Registered multi-repo project: $project_name${NC}"
+        echo -e "  Root: $project_root"
+        echo -e "  Repos: ${repos[*]}"
+    else
+        # Single repo project
+        if ! git -C "$project_root" rev-parse --git-dir &>/dev/null; then
+            error "Not a git repository: $project_root"
+            return 1
+        fi
+
+        local base_branch
+        base_branch=$(git -C "$project_root" branch --show-current)
+
+        cat > "$project_file" << EOF
+name: $project_name
+type: single-repo
+root: $project_root
+base_branch: $base_branch
+EOF
+
+        echo ""
+        echo -e "${GREEN}Registered single-repo project: $project_name${NC}"
+        echo -e "  Root: $project_root"
+        echo -e "  Base branch: $base_branch"
+    fi
+
+    # Create workstream directory
+    mkdir -p "$RALPH_HOME/workstreams/$project_name"
+}
+
+cmd_projects_remove() {
+    local project="$1"
+
+    if [[ -z "$project" ]]; then
+        error "Project name required"
+        echo "Usage: ralph projects remove <name>"
+        return 1
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        return 1
+    fi
+
+    if prompt_yes_no "Remove project '$project' from registry?" "Remove (keeps files)" "Cancel"; then
+        rm -f "$(get_project_file "$project")"
+        echo -e "${GREEN}Removed project: $project${NC}"
+    fi
+}
+
+cmd_projects_update() {
+    local project="$1"
+
+    if [[ -z "$project" ]]; then
+        error "Project name required"
+        echo "Usage: ralph projects update <name>"
+        return 1
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        return 1
+    fi
+
+    local project_root
+    project_root=$(get_project_root "$project")
+    local project_type
+    project_type=$(get_project_type "$project")
+
+    if [[ "$project_type" == "multi-repo" ]]; then
+        echo -e "${CYAN}Re-detecting repositories in ${project_root}...${NC}"
+
+        local project_file
+        project_file=$(get_project_file "$project")
+        local base_branch
+        base_branch=$(yaml_get "$project_file" "base_branch")
+
+        local repos=()
+        for dir in "$project_root"/*/; do
+            if [[ -d "${dir}.git" ]] || [[ -f "${dir}.git" ]]; then
+                local repo_name
+                repo_name=$(basename "$dir")
+                repos+=("$repo_name")
+                echo -e "  Found: ${GREEN}${repo_name}${NC}"
+            fi
+        done
+
+        cat > "$project_file" << EOF
+name: $project
+type: multi-repo
+root: $project_root
+base_branch: ${base_branch:-main}
+repos:
+EOF
+        for repo in "${repos[@]}"; do
+            echo "  - path: $repo" >> "$project_file"
+        done
+
+        echo -e "${GREEN}Updated project: $project${NC}"
+    else
+        echo "Single-repo projects don't need updates"
+    fi
+}
+
+cmd_projects_help() {
+    echo ""
+    echo -e "${BOLD}ralph projects${NC} - Manage project registry"
+    echo ""
+    echo -e "${CYAN}Commands:${NC}"
+    echo "  ralph projects                  List registered projects"
+    echo "  ralph projects add              Register current directory"
+    echo "  ralph projects add --multi-repo Auto-detect repos in subdirectories"
+    echo "  ralph projects remove <name>    Unregister a project"
+    echo "  ralph projects update <name>    Re-detect repos (multi-repo only)"
+    echo ""
+}
+
+#═══════════════════════════════════════════════════════════════
+# Workstream Commands
+#═══════════════════════════════════════════════════════════════
+
+cmd_start() {
+    local project="$1"
+    local workstream="$2"
+    local max_iter="${3:-20}"
+
+    if [[ -z "$project" ]]; then
+        error "Project required. Use -p <project> or cd into project directory."
+        return 1
+    fi
+
+    if [[ -z "$workstream" ]]; then
+        error "Workstream name required"
+        echo "Usage: ralph start <workstream> [max-iterations]"
+        return 1
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        echo "Register with: ralph projects add"
+        return 1
+    fi
+
+    local project_type
+    project_type=$(get_project_type "$project")
+    local project_root
+    project_root=$(get_project_root "$project")
+    local worktree_path
+    worktree_path=$(get_worktree_path "$project" "$workstream")
+    local session_name
+    session_name=$(get_session_name "$project" "$workstream")
+    local workstream_dir
+    workstream_dir=$(get_workstream_dir "$project" "$workstream")
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local log_dir
+    log_dir=$(get_log_dir "$project" "$workstream")
+
+    # Check if worktree already exists
+    if [[ -d "$worktree_path" ]]; then
+        echo -e "${YELLOW}Worktree already exists: $worktree_path${NC}"
+        if prompt_yes_no "Attach to existing session?" "Attach" "Cancel"; then
+            tmux attach -t "$session_name" 2>/dev/null || echo "No session running"
+        fi
+        return
+    fi
+
+    # Check for PROMPT.md
+    if [[ ! -f "${workstream_dir}/PROMPT.md" ]]; then
+        echo -e "${YELLOW}No PROMPT.md found for workstream '${workstream}'${NC}"
+        if prompt_yes_no "Create new workstream?" "Create" "Cancel"; then
+            mkdir -p "$workstream_dir"
+            read -r -p "Brief description: " desc
+            cat > "${workstream_dir}/PROMPT.md" << EOF
+# Ralph Workstream: ${workstream}
+
+## Objective
+${desc}
+
+## Instructions
+1. Read PROGRESS.md to see what's already done
+2. Pick the next task
+3. Implement with minimal changes
+4. Run build/tests to verify
+5. Update PROGRESS.md
+6. If all tasks complete, add "## Status: COMPLETE"
+
+## Constraints
+- One logical change per iteration
+- Always verify changes compile
+- Follow existing code patterns
+EOF
+            echo -e "${GREEN}Created ${workstream_dir}/PROMPT.md${NC}"
+            echo "Edit it, then run: ralph -p $project start $workstream"
+            return
+        else
+            return
+        fi
+    fi
+
+    # Create directories
+    mkdir -p "$state_dir" "$log_dir"
+
+    if [[ "$project_type" == "multi-repo" ]]; then
+        # Multi-repo: create unified worktree directory
+        echo -e "${CYAN}Creating multi-repo worktree: $worktree_path${NC}"
+        mkdir -p "$worktree_path"
+
+        local repos
+        repos=$(get_project_repos "$project")
+
+        for repo in $repos; do
+            local repo_path="${project_root}/${repo}"
+            local branch="ralph/${workstream}"
+
+            echo -e "  Creating worktree for ${CYAN}${repo}${NC}..."
+            cd "$repo_path"
+            git worktree add "${worktree_path}/${repo}" -b "$branch" 2>/dev/null || \
+            git worktree add "${worktree_path}/${repo}" "$branch" 2>/dev/null || {
+                error "Failed to create worktree for $repo"
+                return 1
+            }
+        done
+
+        # Link workstream config
+        ln -sf "$workstream_dir" "${worktree_path}/.ralph-config"
+    else
+        # Single-repo: create worktree
+        echo -e "${CYAN}Creating worktree: $worktree_path${NC}"
+        cd "$project_root"
+        local branch="ralph/${workstream}"
+        git worktree add "$worktree_path" -b "$branch" 2>/dev/null || \
+        git worktree add "$worktree_path" "$branch"
+
+        # Copy config to worktree
+        mkdir -p "${worktree_path}/.ralph/${workstream}"
+        cp "${workstream_dir}/PROMPT.md" "${worktree_path}/.ralph/${workstream}/"
+        [[ -f "${workstream_dir}/PROGRESS.md" ]] && \
+            cp "${workstream_dir}/PROGRESS.md" "${worktree_path}/.ralph/${workstream}/"
+    fi
+
+    # Initialize state
+    echo "0" > "${state_dir}/iteration"
+    echo "RUNNING" > "${state_dir}/status"
+
+    # Start tmux session
+    local log_file="${log_dir}/$(date +%Y-%m-%dT%H-%M-%S).log"
+    echo -e "${CYAN}Starting Ralph in tmux session: $session_name${NC}"
+
+    tmux new-session -d -s "$session_name" -c "$worktree_path" \
+        "RALPH_HOME='$RALPH_HOME' MAX_ITERATIONS=$max_iter $RALPH_HOME/bin/ralph-loop.sh '$project' '$workstream' 2>&1 | tee '$log_file'; echo 'Ralph finished. Press enter to close...'; read"
+
+    # Send notification
+    notify "Ralph Started" "${project}/${workstream} (${max_iter} iterations)"
+
+    echo ""
+    echo -e "${GREEN}Ralph started!${NC}"
+    echo -e "  Project:    ${CYAN}$project${NC}"
+    echo -e "  Workstream: ${CYAN}$workstream${NC}"
+    echo -e "  Worktree:   ${CYAN}$worktree_path${NC}"
+    echo -e "  Session:    ${CYAN}$session_name${NC}"
+    echo ""
+    echo "Commands:"
+    echo "  ralph -p $project attach $workstream  - Watch live"
+    echo "  ralph -p $project stop $workstream    - Stop gracefully"
+    echo "  ralph -p $project status              - Check progress"
+}
+
+cmd_stop() {
+    local project="$1"
+    local workstream="$2"
+
+    if [[ -z "$project" ]]; then
+        error "Project required"
+        return 1
+    fi
+
+    if [[ -z "$workstream" ]] || [[ "$workstream" == "--all" ]]; then
+        # Stop all workstreams for project
+        local sessions
+        sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^ralph-${project}-" || true)
+
+        if [[ -z "$sessions" ]]; then
+            echo "No Ralph sessions running for $project"
+            return
+        fi
+
+        if prompt_yes_no "Stop all workstreams for $project?" "Stop all" "Cancel"; then
+            for session in $sessions; do
+                echo -e "Stopping ${CYAN}${session}${NC}..."
+                tmux send-keys -t "$session" C-c
+            done
+            echo -e "${GREEN}All workstreams signaled to stop${NC}"
+        fi
+    else
+        local session
+        session=$(get_session_name "$project" "$workstream")
+        local state_dir
+        state_dir=$(get_state_dir "$project" "$workstream")
+
+        if tmux has-session -t "$session" 2>/dev/null; then
+            tmux send-keys -t "$session" C-c
+            echo "STOPPING" > "${state_dir}/status"
+            echo -e "${GREEN}Ralph (${project}/${workstream}) will stop${NC}"
+        else
+            touch "${state_dir}/stop"
+            echo -e "${GREEN}Stop signal sent to ${project}/${workstream}${NC}"
+        fi
+    fi
+}
+
+cmd_status() {
+    local project="$1"
+
+    if [[ -z "$project" ]]; then
+        error "Project required"
+        return 1
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        return 1
+    fi
+
+    echo ""
+    echo -e "${BOLD}Ralph Workstreams - ${project}${NC}"
+    echo "=============================="
+    echo ""
+
+    local workstreams
+    workstreams=($(get_workstreams "$project"))
+
+    if [[ ${#workstreams[@]} -eq 0 ]]; then
+        echo "No workstreams running"
+        echo ""
+        echo "Start one with: ralph -p $project start <name>"
+        return
+    fi
+
+    for ws in "${workstreams[@]}"; do
+        local status iter icon question
+        status=$(get_status "$project" "$ws")
+        iter=$(get_iteration "$project" "$ws")
+        icon=$(status_icon "$status")
+        question=$(get_question "$project" "$ws")
+
+        echo -e "  ${BOLD}${ws}${NC}"
+        echo -e "    Status: ${icon} ${status}"
+        echo -e "    Iteration: ${iter}"
+        if [[ -n "$question" ]]; then
+            echo -e "    ${YELLOW}Question: ${question}${NC}"
+        fi
+        echo ""
+    done
+}
+
+cmd_attach() {
+    local project="$1"
+    local workstream="$2"
+
+    if [[ -z "$project" ]] || [[ -z "$workstream" ]]; then
+        error "Project and workstream required"
+        echo "Usage: ralph -p <project> attach <workstream>"
+        return 1
+    fi
+
+    local session
+    session=$(get_session_name "$project" "$workstream")
+
+    if tmux has-session -t "$session" 2>/dev/null; then
+        tmux attach -t "$session"
+    else
+        error "No session found: $session"
+    fi
+}
+
+cmd_answer() {
+    local project="$1"
+    local workstream="$2"
+
+    if [[ -z "$project" ]]; then
+        error "Project required"
+        return 1
+    fi
+
+    # Find workstream with question if not specified
+    if [[ -z "$workstream" ]]; then
+        for ws in $(get_workstreams "$project"); do
+            local state_dir
+            state_dir=$(get_state_dir "$project" "$ws")
+            if [[ -f "${state_dir}/question" ]]; then
+                workstream="$ws"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "$workstream" ]]; then
+        echo "No questions pending for $project"
+        return
+    fi
+
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local question_file="${state_dir}/question"
+
+    if [[ ! -f "$question_file" ]]; then
+        echo "No question pending for $workstream"
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}Question from ${CYAN}${project}/${workstream}${NC}:${NC}"
+    echo ""
+    cat "$question_file"
+    echo ""
+    echo -e "${DIM}Type your answer (or 'skip' to defer):${NC}"
+    read -r -p "> " answer
+
+    if [[ "$answer" != "skip" ]]; then
+        echo "$answer" > "${state_dir}/answer"
+        rm -f "$question_file"
+        echo -e "${GREEN}Answer sent to Ralph${NC}"
+    fi
+}
+
+cmd_cleanup() {
+    local project="$1"
+    local workstream="$2"
+
+    if [[ -z "$project" ]] || [[ -z "$workstream" ]]; then
+        error "Project and workstream required"
+        echo "Usage: ralph -p <project> cleanup <workstream>"
+        return 1
+    fi
+
+    local project_type
+    project_type=$(get_project_type "$project")
+    local project_root
+    project_root=$(get_project_root "$project")
+    local worktree_path
+    worktree_path=$(get_worktree_path "$project" "$workstream")
+    local session
+    session=$(get_session_name "$project" "$workstream")
+
+    # Kill session if running
+    if tmux has-session -t "$session" 2>/dev/null; then
+        echo -e "${YELLOW}Stopping running session...${NC}"
+        tmux kill-session -t "$session"
+    fi
+
+    if [[ "$project_type" == "multi-repo" ]]; then
+        # Multi-repo cleanup
+        local repos
+        repos=$(get_project_repos "$project")
+        local branch="ralph/${workstream}"
+        local all_clean=true
+
+        # Check for uncommitted changes in all repos
+        for repo in $repos; do
+            local repo_worktree="${worktree_path}/${repo}"
+            if [[ -d "$repo_worktree" ]]; then
+                cd "$repo_worktree"
+                if [[ -n $(git status --porcelain 2>/dev/null) ]]; then
+                    echo -e "${YELLOW}Uncommitted changes in ${repo}${NC}"
+                    git status --short
+                    all_clean=false
+                fi
+            fi
+        done
+
+        if ! $all_clean; then
+            if ! prompt_yes_no "Discard all uncommitted changes?" "Discard" "Cancel"; then
+                return
+            fi
+        fi
+
+        # Merge each repo
+        echo -e "${CYAN}Merging all repos...${NC}"
+        local merge_failed=false
+
+        for repo in $repos; do
+            local repo_path="${project_root}/${repo}"
+            cd "$repo_path"
+
+            if git show-ref --verify --quiet "refs/heads/${branch}"; then
+                echo -e "  Merging ${CYAN}${repo}${NC}..."
+                if ! git merge "$branch" --no-edit 2>/dev/null; then
+                    error "Merge conflict in $repo"
+                    merge_failed=true
+                    break
+                fi
+            fi
+        done
+
+        if $merge_failed; then
+            error "Merge failed. Resolve conflicts manually, then:"
+            echo "  1. Complete merge in each repo"
+            echo "  2. Remove worktrees: rm -rf $worktree_path"
+            echo "  3. Delete branches in each repo"
+            return 1
+        fi
+
+        # Remove worktrees
+        echo -e "${CYAN}Removing worktrees...${NC}"
+        for repo in $repos; do
+            local repo_path="${project_root}/${repo}"
+            cd "$repo_path"
+            git worktree remove "${worktree_path}/${repo}" --force 2>/dev/null || true
+            git branch -d "$branch" 2>/dev/null || true
+        done
+
+        rm -rf "$worktree_path"
+    else
+        # Single-repo cleanup
+        cd "$project_root"
+        local branch="ralph/${workstream}"
+
+        if [[ -d "$worktree_path" ]]; then
+            cd "$worktree_path"
+            if [[ -n $(git status --porcelain 2>/dev/null) ]]; then
+                echo -e "${YELLOW}Uncommitted changes in worktree${NC}"
+                git status --short
+                if ! prompt_yes_no "Discard changes?" "Discard" "Cancel"; then
+                    return
+                fi
+            fi
+            cd "$project_root"
+        fi
+
+        echo -e "${CYAN}Merging $branch...${NC}"
+        if git merge "$branch" --no-edit; then
+            echo -e "${GREEN}Merge successful!${NC}"
+        else
+            error "Merge conflicts detected"
+            echo "Resolve conflicts, then run:"
+            echo "  git worktree remove $worktree_path"
+            echo "  git branch -d $branch"
+            return 1
+        fi
+
+        git worktree remove "$worktree_path" --force 2>/dev/null || true
+        git branch -d "$branch" 2>/dev/null || true
+    fi
+
+    notify "Ralph Cleanup" "Merged ${project}/${workstream}"
+    echo -e "${GREEN}Cleanup complete!${NC}"
+}
+
+cmd_logs() {
+    local project="$1"
+    local workstream="$2"
+
+    if [[ -z "$project" ]] || [[ -z "$workstream" ]]; then
+        error "Project and workstream required"
+        return 1
+    fi
+
+    local log_dir
+    log_dir=$(get_log_dir "$project" "$workstream")
+
+    if [[ ! -d "$log_dir" ]]; then
+        echo "No logs found for ${project}/${workstream}"
+        return
+    fi
+
+    local latest_log
+    latest_log=$(ls -t "$log_dir"/*.log 2>/dev/null | head -1)
+
+    if [[ -n "$latest_log" ]]; then
+        tail -f "$latest_log"
+    else
+        echo "No log files found"
+    fi
+}
+
+#═══════════════════════════════════════════════════════════════
+# Recovery
+#═══════════════════════════════════════════════════════════════
+
+cmd_recover() {
+    echo -e "${CYAN}Checking for orphaned workstreams...${NC}"
+    local recovered=0
+
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+
+        local project
+        project=$(basename "$project_file" .yaml)
+        local project_root
+        project_root=$(get_project_root "$project")
+
+        [[ -d "$project_root" ]] || continue
+
+        for ws in $(get_workstreams "$project"); do
+            local session
+            session=$(get_session_name "$project" "$ws")
+            local state_dir
+            state_dir=$(get_state_dir "$project" "$ws")
+
+            # Check if tmux session exists
+            if ! tmux has-session -t "$session" 2>/dev/null; then
+                # Check if state says RUNNING
+                if [[ -f "${state_dir}/status" ]] && [[ "$(cat "${state_dir}/status")" == "RUNNING" ]]; then
+                    echo -e "  Found orphaned: ${YELLOW}${project}/${ws}${NC}"
+                    echo "STOPPED" > "${state_dir}/status"
+                    ((recovered++))
+                fi
+            fi
+        done
+    done
+
+    if [[ $recovered -gt 0 ]]; then
+        notify "Ralph Recovered" "Found $recovered orphaned workstream(s)"
+        echo -e "${GREEN}Recovered $recovered orphaned workstream(s)${NC}"
+    else
+        echo "No orphaned workstreams found"
+    fi
+}
+
+#═══════════════════════════════════════════════════════════════
+# Interactive Dashboard
+#═══════════════════════════════════════════════════════════════
+
+interactive_mode_global() {
+    echo ""
+    echo -e "${BOLD}Ralph - Global Dashboard${NC}"
+    echo "========================"
+    echo ""
+
+    # List all projects with active workstreams
+    local has_active=false
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+
+        local project
+        project=$(basename "$project_file" .yaml)
+        local workstreams
+        workstreams=($(get_workstreams "$project"))
+
+        if [[ ${#workstreams[@]} -gt 0 ]]; then
+            has_active=true
+            echo -e "${BOLD}${project}${NC}"
+
+            for ws in "${workstreams[@]}"; do
+                local status iter icon
+                status=$(get_status "$project" "$ws")
+                iter=$(get_iteration "$project" "$ws")
+                icon=$(status_icon "$status")
+                echo -e "  ${icon} ${ws} (iter ${iter})"
+            done
+            echo ""
+        fi
+    done
+
+    if ! $has_active; then
+        echo "No active workstreams"
+        echo ""
+        echo "Start one with: ralph -p <project> start <workstream>"
+    fi
+
+    echo ""
+    echo -e "${DIM}Use 'ralph -p <project>' for project-specific dashboard${NC}"
+}
+
+interactive_mode() {
+    local project="$1"
+
+    if [[ -z "$project" ]]; then
+        interactive_mode_global
+        return
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        return 1
+    fi
+
+    while true; do
+        clear
+        echo -e "${BOLD}Ralph - ${project}${NC}"
+        echo "========================"
+        echo ""
+
+        local workstreams
+        workstreams=($(get_workstreams "$project"))
+        local has_questions=false
+        local question_ws=""
+
+        for ws in "${workstreams[@]}"; do
+            local status iter icon question
+            status=$(get_status "$project" "$ws")
+            iter=$(get_iteration "$project" "$ws")
+            icon=$(status_icon "$status")
+            question=$(get_question "$project" "$ws")
+
+            echo -e "  ${icon} ${BOLD}${ws}${NC} - ${status} (iter ${iter})"
+            if [[ -n "$question" ]]; then
+                echo -e "     ${YELLOW}Q: ${question:0:50}...${NC}"
+                has_questions=true
+                question_ws="$ws"
+            fi
+        done
+
+        if [[ ${#workstreams[@]} -eq 0 ]]; then
+            echo "  No active workstreams"
+        fi
+
+        echo ""
+        echo -e "${BOLD}Actions:${NC}"
+        local menu_num=1
+
+        if $has_questions; then
+            echo -e "  ${CYAN}${menu_num}.${NC} Answer question for ${YELLOW}${question_ws}${NC}"
+            ((menu_num++))
+        fi
+
+        echo -e "  ${CYAN}${menu_num}.${NC} Start new workstream"
+        ((menu_num++))
+        echo -e "  ${CYAN}${menu_num}.${NC} Attach to workstream"
+        ((menu_num++))
+        echo -e "  ${CYAN}${menu_num}.${NC} Stop workstream"
+        ((menu_num++))
+        echo -e "  ${CYAN}${menu_num}.${NC} Cleanup workstream"
+        ((menu_num++))
+        echo -e "  ${DIM}q. Quit${NC}"
+        echo ""
+
+        read -r -p "> " choice
+
+        case $choice in
+            q|Q) exit 0 ;;
+            1)
+                if $has_questions; then
+                    cmd_answer "$project" "$question_ws"
+                else
+                    echo ""
+                    read -r -p "Workstream name: " name
+                    read -r -p "Max iterations (20): " max_iter
+                    cmd_start "$project" "$name" "${max_iter:-20}"
+                fi
+                ;;
+            2)
+                if $has_questions; then
+                    echo ""
+                    read -r -p "Workstream name: " name
+                    read -r -p "Max iterations (20): " max_iter
+                    cmd_start "$project" "$name" "${max_iter:-20}"
+                else
+                    if [[ ${#workstreams[@]} -gt 0 ]]; then
+                        echo ""
+                        echo "Select workstream:"
+                        select ws in "${workstreams[@]}"; do
+                            [[ -n "$ws" ]] && cmd_attach "$project" "$ws"
+                            break
+                        done
+                    fi
+                fi
+                ;;
+            3)
+                if $has_questions; then
+                    if [[ ${#workstreams[@]} -gt 0 ]]; then
+                        echo ""
+                        echo "Select workstream:"
+                        select ws in "${workstreams[@]}"; do
+                            [[ -n "$ws" ]] && cmd_attach "$project" "$ws"
+                            break
+                        done
+                    fi
+                else
+                    if [[ ${#workstreams[@]} -gt 0 ]]; then
+                        echo ""
+                        echo "Select workstream:"
+                        select ws in "${workstreams[@]}" "Stop all"; do
+                            if [[ "$ws" == "Stop all" ]]; then
+                                cmd_stop "$project" "--all"
+                            elif [[ -n "$ws" ]]; then
+                                cmd_stop "$project" "$ws"
+                            fi
+                            break
+                        done
+                    fi
+                fi
+                ;;
+            4)
+                if $has_questions; then
+                    if [[ ${#workstreams[@]} -gt 0 ]]; then
+                        echo ""
+                        echo "Select workstream:"
+                        select ws in "${workstreams[@]}" "Stop all"; do
+                            if [[ "$ws" == "Stop all" ]]; then
+                                cmd_stop "$project" "--all"
+                            elif [[ -n "$ws" ]]; then
+                                cmd_stop "$project" "$ws"
+                            fi
+                            break
+                        done
+                    fi
+                else
+                    if [[ ${#workstreams[@]} -gt 0 ]]; then
+                        echo ""
+                        echo "Select workstream:"
+                        select ws in "${workstreams[@]}"; do
+                            [[ -n "$ws" ]] && cmd_cleanup "$project" "$ws"
+                            break
+                        done
+                    fi
+                fi
+                ;;
+            5)
+                if [[ ${#workstreams[@]} -gt 0 ]]; then
+                    echo ""
+                    echo "Select workstream:"
+                    select ws in "${workstreams[@]}"; do
+                        [[ -n "$ws" ]] && cmd_cleanup "$project" "$ws"
+                        break
+                    done
+                fi
+                ;;
+        esac
+
+        read -r -p "Press enter to continue..."
+    done
+}
+
+#═══════════════════════════════════════════════════════════════
+# Server Commands
+#═══════════════════════════════════════════════════════════════
+
+SERVER_DIR="$RALPH_HOME/server"
+SERVER_PID_FILE="$RALPH_HOME/server.pid"
+
+cmd_server_start() {
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$SERVER_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            warn "Server already running (PID $pid)"
+            return
+        fi
+    fi
+
+    # Check if dependencies installed
+    if [[ ! -d "$SERVER_DIR/node_modules" ]]; then
+        echo -e "${CYAN}Installing server dependencies...${NC}"
+        cd "$SERVER_DIR"
+        npm install --silent
+    fi
+
+    local port
+    port=$(grep "port:" "$RALPH_HOME/config.yaml" 2>/dev/null | head -1 | grep -o '[0-9]*' || echo "3847")
+
+    echo -e "${CYAN}Starting Ralph API server on port $port...${NC}"
+    cd "$SERVER_DIR"
+    nohup node server.js > "$RALPH_HOME/logs/server.log" 2>&1 &
+    echo $! > "$SERVER_PID_FILE"
+
+    sleep 1
+    if kill -0 "$(cat "$SERVER_PID_FILE")" 2>/dev/null; then
+        echo -e "${GREEN}Server started!${NC}"
+        echo "  PID: $(cat "$SERVER_PID_FILE")"
+        echo "  URL: http://localhost:$port"
+        echo "  Log: $RALPH_HOME/logs/server.log"
+    else
+        error "Failed to start server. Check $RALPH_HOME/logs/server.log"
+        rm -f "$SERVER_PID_FILE"
+    fi
+}
+
+cmd_server_stop() {
+    if [[ ! -f "$SERVER_PID_FILE" ]]; then
+        echo "Server not running"
+        return
+    fi
+
+    local pid
+    pid=$(cat "$SERVER_PID_FILE")
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid"
+        echo -e "${GREEN}Server stopped${NC}"
+    else
+        echo "Server not running (stale PID file)"
+    fi
+    rm -f "$SERVER_PID_FILE"
+}
+
+cmd_server_status() {
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        local pid
+        pid=$(cat "$SERVER_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            local port
+            port=$(grep "port:" "$RALPH_HOME/config.yaml" 2>/dev/null | head -1 | grep -o '[0-9]*' || echo "3847")
+            echo -e "${GREEN}Server running${NC}"
+            echo "  PID: $pid"
+            echo "  URL: http://localhost:$port"
+            return
+        fi
+    fi
+    echo "Server not running"
+}
+
+cmd_server_key() {
+    local key
+    key=$(openssl rand -hex 24)
+
+    # Update config file - handle both commented and uncommented api_key lines
+    if grep -q "^[[:space:]]*api_key:" "$RALPH_HOME/config.yaml" 2>/dev/null; then
+        # Update existing uncommented key
+        sed -i '' "s/^[[:space:]]*api_key:.*/  api_key: \"$key\"/" "$RALPH_HOME/config.yaml"
+    elif grep -q "#.*api_key:" "$RALPH_HOME/config.yaml" 2>/dev/null; then
+        # Replace commented key with uncommented one
+        sed -i '' "s/#.*api_key:.*/  api_key: \"$key\"/" "$RALPH_HOME/config.yaml"
+    else
+        # Add key to server section
+        if grep -q "^server:" "$RALPH_HOME/config.yaml" 2>/dev/null; then
+            sed -i '' "/^server:/a\\
+  api_key: \"$key\"
+" "$RALPH_HOME/config.yaml"
+        else
+            echo "" >> "$RALPH_HOME/config.yaml"
+            echo "# API server authentication" >> "$RALPH_HOME/config.yaml"
+            echo "server:" >> "$RALPH_HOME/config.yaml"
+            echo "  api_key: \"$key\"" >> "$RALPH_HOME/config.yaml"
+        fi
+    fi
+
+    echo -e "${GREEN}API key generated:${NC}"
+    echo "  $key"
+    echo ""
+    echo "Use in requests:"
+    echo "  curl -H 'X-API-Key: $key' http://localhost:3847/projects"
+    echo ""
+    echo "Restart server to apply: ralph server restart"
+}
+
+cmd_server_restart() {
+    cmd_server_stop
+    sleep 1
+    cmd_server_start
+}
+
+cmd_server_help() {
+    echo ""
+    echo -e "${BOLD}ralph server${NC} - Manage REST API server"
+    echo ""
+    echo -e "${CYAN}Commands:${NC}"
+    echo "  ralph server start     Start the API server"
+    echo "  ralph server stop      Stop the API server"
+    echo "  ralph server status    Check server status"
+    echo "  ralph server restart   Restart the server"
+    echo "  ralph server key       Generate new API key"
+    echo ""
+    echo -e "${CYAN}Endpoints:${NC}"
+    echo "  GET  /projects                           List all projects"
+    echo "  GET  /projects/:name                     Get project details"
+    echo "  GET  /projects/:name/workstreams         List workstreams"
+    echo "  GET  /projects/:name/workstreams/:ws     Get workstream status"
+    echo "  POST /projects/:name/workstreams/:ws/stop   Stop workstream"
+    echo "  POST /projects/:name/workstreams/:ws/answer Answer question"
+    echo "  GET  /projects/:name/workstreams/:ws/logs   Get log tail"
+    echo ""
+}
+
+#═══════════════════════════════════════════════════════════════
+# Help
+#═══════════════════════════════════════════════════════════════
+
+cmd_help() {
+    echo ""
+    echo -e "${BOLD}ralph${NC} v${RALPH_VERSION} - Autonomous AI development orchestrator"
+    echo ""
+    echo -e "${CYAN}Project Management:${NC}"
+    echo "  ralph projects                    List registered projects"
+    echo "  ralph projects add                Register current directory"
+    echo "  ralph projects add --multi-repo   Auto-detect repos in subdirectories"
+    echo "  ralph projects remove <name>      Unregister a project"
+    echo "  ralph projects update <name>      Re-detect repos"
+    echo ""
+    echo -e "${CYAN}Workstream Operations:${NC}"
+    echo "  ralph -p <project> start <ws>     Start workstream"
+    echo "  ralph -p <project> stop <ws>      Stop workstream"
+    echo "  ralph -p <project> status         List workstreams"
+    echo "  ralph -p <project> attach <ws>    Watch live (Ctrl-b d to detach)"
+    echo "  ralph -p <project> answer [ws]    Answer pending question"
+    echo "  ralph -p <project> cleanup <ws>   Merge and remove worktree"
+    echo "  ralph -p <project> logs <ws>      Tail log file"
+    echo ""
+    echo -e "${CYAN}Auto-detect Project:${NC}"
+    echo "  ralph start <ws>                  Start (detect project from cwd)"
+    echo "  ralph status                      Status (detect project from cwd)"
+    echo ""
+    echo -e "${CYAN}Global:${NC}"
+    echo "  ralph                             Interactive dashboard"
+    echo "  ralph recover                     Find orphaned workstreams"
+    echo "  ralph help                        Show this help"
+    echo ""
+    echo -e "${CYAN}Server (REST API):${NC}"
+    echo "  ralph server start                Start API server"
+    echo "  ralph server stop                 Stop API server"
+    echo "  ralph server status               Check server status"
+    echo "  ralph server key                  Generate API key"
+    echo "  ralph server help                 Show endpoints"
+    echo ""
+    echo -e "${CYAN}Configuration:${NC}"
+    echo "  Config: ${RALPH_HOME}/config.yaml"
+    echo "  Projects: ${RALPH_HOME}/projects/"
+    echo "  Workstreams: ${RALPH_HOME}/workstreams/"
+    echo ""
+}
+
+#═══════════════════════════════════════════════════════════════
+# Main Entry Point
+#═══════════════════════════════════════════════════════════════
+
+# Ensure directories exist
+mkdir -p "$RALPH_HOME"/{bin,projects,workstreams,logs,state}
+
+# Parse arguments
+PROJECT=""
+COMMAND=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--project)
+            PROJECT="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+COMMAND="${1:-}"
+ARG1="${2:-}"
+ARG2="${3:-}"
+
+# Route commands
+case $COMMAND in
+    projects)
+        case ${ARG1:-list} in
+            list|"")  cmd_projects_list ;;
+            add)      cmd_projects_add "${@:3}" ;;
+            remove)   cmd_projects_remove "$ARG2" ;;
+            update)   cmd_projects_update "$ARG2" ;;
+            help)     cmd_projects_help ;;
+            *)        cmd_projects_help ;;
+        esac
+        ;;
+    start)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_start "$PROJECT" "$ARG1" "$ARG2"
+        ;;
+    stop)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_stop "$PROJECT" "$ARG1"
+        ;;
+    status)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_status "$PROJECT"
+        ;;
+    attach)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_attach "$PROJECT" "$ARG1"
+        ;;
+    answer)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_answer "$PROJECT" "$ARG1"
+        ;;
+    cleanup)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_cleanup "$PROJECT" "$ARG1"
+        ;;
+    logs)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_logs "$PROJECT" "$ARG1"
+        ;;
+    recover)
+        cmd_recover
+        ;;
+    server)
+        case ${ARG1:-help} in
+            start)   cmd_server_start ;;
+            stop)    cmd_server_stop ;;
+            status)  cmd_server_status ;;
+            restart) cmd_server_restart ;;
+            key)     cmd_server_key ;;
+            help|*)  cmd_server_help ;;
+        esac
+        ;;
+    help|--help|-h)
+        cmd_help
+        ;;
+    "")
+        if [[ -n "$PROJECT" ]]; then
+            interactive_mode "$PROJECT"
+        else
+            interactive_mode_global
+        fi
+        ;;
+    *)
+        error "Unknown command: $COMMAND"
+        cmd_help
+        exit 1
+        ;;
+esac

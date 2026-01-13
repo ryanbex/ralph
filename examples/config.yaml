@@ -1,0 +1,41 @@
+# Ralph Global Configuration
+# Copy to ~/.ralph/config.yaml and customize
+
+# Default settings for all workstreams
+defaults:
+  max_iterations: 20
+  base_branch: main
+
+# Bark push notifications (iOS)
+# https://github.com/Finb/Bark
+# 1. Install Bark app on iPhone
+# 2. Copy your URL from the app
+# 3. Paste below and set enabled: true
+notifications:
+  bark:
+    enabled: false
+    url: "https://api.day.app/YOUR_BARK_KEY"
+    events:
+      - stuck      # No progress for 3+ iterations
+      - question   # Ralph needs input
+      - complete   # Workstream finished
+      - error      # Iteration failed
+      - recovered  # Auto-recovered orphaned workstream
+
+# REST API server
+# Access Ralph from your phone via VPN
+server:
+  port: 3847
+  # api_key: <run 'ralph server key' to generate>
+
+# Auto-recovery settings
+# Detect and restart orphaned workstreams after crash/reboot
+recovery:
+  auto: true         # Auto-recover on 'ralph recover'
+  notify: true       # Send Bark notification on recovery
+
+# Stuck detection
+# Notify if no progress detected for multiple iterations
+stuck:
+  threshold: 3       # Number of iterations without progress
+  check_progress: true  # Monitor PROGRESS.md changes
