@@ -98,6 +98,142 @@ set_status() {
     echo "$1" > "$STATUS_FILE"
 }
 
+# Check if auto_merge is enabled
+is_auto_merge_enabled() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local value
+        value=$(grep "auto_merge:" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d: -f2 | xargs)
+        [[ "$value" == "true" ]]
+    else
+        # Default to true
+        return 0
+    fi
+}
+
+# Get project root from project file
+get_project_root() {
+    if [[ -f "$PROJECT_FILE" ]]; then
+        grep "^root:" "$PROJECT_FILE" | cut -d: -f2- | xargs
+    else
+        echo ""
+    fi
+}
+
+# Get base branch from project file
+get_base_branch() {
+    if [[ -f "$PROJECT_FILE" ]]; then
+        local branch
+        branch=$(grep "^base_branch:" "$PROJECT_FILE" | cut -d: -f2 | xargs)
+        echo "${branch:-main}"
+    else
+        echo "main"
+    fi
+}
+
+# Perform auto-merge after completion
+auto_merge() {
+    log "Auto-merge enabled, merging workstream..."
+
+    local project_type
+    project_type=$(get_project_type)
+    local project_root
+    project_root=$(get_project_root)
+    local base_branch
+    base_branch=$(get_base_branch)
+    local worktree_path="${project_root}-${WORKSTREAM}"
+
+    if [[ "$project_type" == "multi-repo" ]]; then
+        auto_merge_multi_repo "$project_root" "$base_branch" "$worktree_path"
+    else
+        auto_merge_single_repo "$project_root" "$base_branch" "$worktree_path"
+    fi
+}
+
+# Auto-merge for single-repo projects
+auto_merge_single_repo() {
+    local project_root="$1"
+    local base_branch="$2"
+    local worktree_path="$3"
+    local branch="ralph/${WORKSTREAM}"
+
+    cd "$project_root"
+
+    # Merge the branch
+    log "Merging $branch into $base_branch..."
+    if git merge "$branch" --no-edit 2>/dev/null; then
+        log "Merge successful"
+
+        # Remove worktree
+        log "Removing worktree..."
+        git worktree remove "$worktree_path" --force 2>/dev/null || true
+
+        # Delete branch
+        git branch -d "$branch" 2>/dev/null || git branch -D "$branch" 2>/dev/null || true
+
+        # Clean up state
+        rm -rf "$STATE_DIR"
+
+        notify "Ralph Merged" "${PROJECT}/${WORKSTREAM} merged successfully"
+        log "Auto-merge complete!"
+        return 0
+    else
+        warn "Merge failed - manual cleanup required"
+        notify "Ralph Merge Failed" "${PROJECT}/${WORKSTREAM} has conflicts"
+        return 1
+    fi
+}
+
+# Auto-merge for multi-repo projects
+auto_merge_multi_repo() {
+    local project_root="$1"
+    local base_branch="$2"
+    local worktree_path="$3"
+    local branch="ralph/${WORKSTREAM}"
+    local repos
+    repos=$(get_repos)
+
+    # First, check all repos can merge cleanly
+    log "Checking all repos for merge conflicts..."
+    for repo in $repos; do
+        local repo_path="${project_root}/${repo}"
+        cd "$repo_path"
+
+        if ! git merge --no-commit --no-ff "$branch" 2>/dev/null; then
+            git merge --abort 2>/dev/null || true
+            warn "Merge would conflict in $repo - manual cleanup required"
+            notify "Ralph Merge Failed" "${PROJECT}/${WORKSTREAM} has conflicts in $repo"
+            return 1
+        fi
+        git merge --abort 2>/dev/null || true
+    done
+
+    # All clear, do the actual merges
+    log "Merging all repos..."
+    for repo in $repos; do
+        local repo_path="${project_root}/${repo}"
+        cd "$repo_path"
+
+        log "Merging $repo..."
+        git merge "$branch" --no-edit
+
+        # Remove worktree for this repo
+        git worktree remove "${worktree_path}/${repo}" --force 2>/dev/null || true
+
+        # Delete branch
+        git branch -d "$branch" 2>/dev/null || git branch -D "$branch" 2>/dev/null || true
+    done
+
+    # Remove unified worktree directory
+    rmdir "$worktree_path" 2>/dev/null || rm -rf "$worktree_path" 2>/dev/null || true
+
+    # Clean up state
+    rm -rf "$STATE_DIR"
+
+    notify "Ralph Merged" "${PROJECT}/${WORKSTREAM} merged across all repos"
+    log "Auto-merge complete!"
+    return 0
+}
+
 # Update iteration count
 set_iteration() {
     echo "$1" > "$ITERATION_FILE"
@@ -353,7 +489,20 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if [[ -f "$PROGRESS_FILE" ]] && grep -q "^## Status: COMPLETE" "$PROGRESS_FILE"; then
         log "Workstream marked as COMPLETE!"
         set_status "COMPLETE"
-        exit 0
+
+        # Auto-merge if enabled
+        if is_auto_merge_enabled; then
+            if auto_merge; then
+                exit 0
+            else
+                # Merge failed, but workstream is complete
+                notify "Ralph Complete" "${PROJECT}/${WORKSTREAM} complete (manual merge needed)"
+                exit 0
+            fi
+        else
+            notify "Ralph Complete" "${PROJECT}/${WORKSTREAM} complete"
+            exit 0
+        fi
     fi
 
     # Check for NEEDS_INPUT marker

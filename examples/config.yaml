@@ -5,6 +5,7 @@
 defaults:
   max_iterations: 20
   base_branch: main
+  auto_merge: true     # Automatically merge and cleanup when workstream completes
 
 # Bark push notifications (iOS)
 # https://github.com/Finb/Bark
