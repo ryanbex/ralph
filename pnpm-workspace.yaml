@@ -1,0 +1,6 @@
+packages:
+  - "web"
+  - "worker"
+  - "infra"
+  - "db"
+  - "shared/*"

@@ -1,6 +1,25 @@
 # Dependencies
 node_modules/
 package-lock.json
+.pnpm-store
+
+# Next.js
+.next/
+out/
+
+# Build outputs
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Turbo
+.turbo
 
 # Runtime files (created during installation)
 # These are in ~/.ralph/, not in the repo
@@ -18,7 +37,13 @@ Thumbs.db
 
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Test artifacts
 coverage/
 .nyc_output/
+
+# TypeScript
+*.tsbuildinfo
