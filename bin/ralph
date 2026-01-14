@@ -7,15 +7,15 @@ set -euo pipefail
 RALPH_HOME="${RALPH_HOME:-$HOME/.ralph}"
 RALPH_VERSION="2.0.0"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# Colors (using $'...' for proper escape interpretation)
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+CYAN=$'\033[0;36m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+NC=$'\033[0m'
 
 # Box drawing characters
 H_LINE="─"
@@ -1242,31 +1242,25 @@ cmd_prune() {
 interactive_mode_global() {
     echo ""
     echo -e "${BOLD}Ralph - Global Dashboard${NC}"
-    echo "========================"
     echo ""
 
-    # List all projects with active workstreams
+    # Collect all workstreams across all projects
     local has_active=false
+    local all_rows=()
+
     for project_file in "$RALPH_HOME/projects/"*.yaml; do
         [[ -f "$project_file" ]] || continue
 
         local project
         project=$(basename "$project_file" .yaml)
-        local workstreams
-        workstreams=($(get_workstreams "$project"))
+        local workstreams_str
+        workstreams_str=$(get_workstreams "$project")
 
-        if [[ ${#workstreams[@]} -gt 0 ]]; then
-            has_active=true
-            echo -e "${BOLD}${project}${NC}"
-
-            for ws in "${workstreams[@]}"; do
-                local status iter icon
-                status=$(get_status "$project" "$ws")
-                iter=$(get_iteration "$project" "$ws")
-                icon=$(status_icon "$status")
-                echo -e "  ${icon} ${ws} (iter ${iter})"
+        if [[ -n "$workstreams_str" ]]; then
+            for ws in $workstreams_str; do
+                has_active=true
+                all_rows+=("$project|$ws")
             done
-            echo ""
         fi
     done
 
@@ -1274,10 +1268,67 @@ interactive_mode_global() {
         echo "No active workstreams"
         echo ""
         echo "Start one with: ralph -p <project> start <workstream>"
+        return
     fi
 
+    # Table header
+    printf "┌────────────────────┬────────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
+    printf "│ %-18s │ %-18s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
+           "Project" "Workstream" "Status" "Progress" "Tokens" "Cost" "Duration"
+    printf "├────────────────────┼────────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
+
+    for row in "${all_rows[@]}"; do
+        local project ws
+        project=$(echo "$row" | cut -d'|' -f1)
+        ws=$(echo "$row" | cut -d'|' -f2)
+
+        local status iteration metrics
+        status=$(get_status "$project" "$ws")
+        iteration=$(get_iteration "$project" "$ws")
+        metrics=$(get_metrics "$project" "$ws")
+
+        local max_iter tokens_in tokens_out total_tokens cost start_time
+        max_iter=$(echo "$metrics" | jq -r '.max_iterations // 100')
+        tokens_in=$(echo "$metrics" | jq -r '.tokens_in // 0')
+        tokens_out=$(echo "$metrics" | jq -r '.tokens_out // 0')
+        total_tokens=$((tokens_in + tokens_out))
+        cost=$(echo "$metrics" | jq -r '.total_cost // 0')
+        start_time=$(echo "$metrics" | jq -r '.start_time // ""')
+
+        local progress_pct=0
+        [[ $max_iter -gt 0 ]] && progress_pct=$((iteration * 100 / max_iter))
+
+        local tokens_fmt cost_fmt duration_fmt progress_fmt
+        tokens_fmt=$(format_tokens "$total_tokens")
+        cost_fmt=$(printf "\$%.2f" "$cost")
+        duration_fmt=$(format_duration "$start_time")
+        progress_fmt=$(printf "%2d/%-3d %2d%%" "$iteration" "$max_iter" "$progress_pct")
+
+        # Truncate long names
+        local proj_short="${project:0:18}"
+        local ws_short="${ws:0:18}"
+
+        # Status with color
+        local status_display
+        case "$status" in
+            RUNNING)     status_display="${GREEN}RUNNING${NC}" ;;
+            COMPLETE)    status_display="${GREEN}COMPLETE${NC}" ;;
+            STOPPED)     status_display="${DIM}STOPPED${NC}" ;;
+            NEEDS_INPUT) status_display="${YELLOW}NEEDS_IN${NC}" ;;
+            STUCK)       status_display="${RED}STUCK${NC}" ;;
+            ERROR)       status_display="${RED}ERROR${NC}" ;;
+            *)           status_display="$status" ;;
+        esac
+
+        # Pad status for alignment (8 chars)
+        local status_padded
+        status_padded=$(printf "%-8s" "$status")
+
+        echo -e "│ $(printf '%-18s' "$proj_short") │ $(printf '%-18s' "$ws_short") │ ${status_display}$(printf '%*s' $((8 - ${#status})) '') │ $(printf '%-10s' "$progress_fmt") │ $(printf '%-8s' "$tokens_fmt") │ $(printf '%-7s' "$cost_fmt") │ $(printf '%-8s' "$duration_fmt") │"
+    done
+
+    printf "└────────────────────┴────────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
     echo ""
-    echo -e "${DIM}Use 'ralph -p <project>' for project-specific dashboard${NC}"
 }
 
 interactive_mode() {
