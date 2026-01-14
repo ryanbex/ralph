@@ -1,0 +1,129 @@
+/* 8-bit Pixel Art Theme - Simpsons-inspired color palette */
+
+:root {
+  /* Simpsons Color Palette */
+  --simpson-yellow: #FFD90F;
+  --simpson-blue: #70D1FE;
+  --simpson-green: #D6E69F;
+  --simpson-red: #F14C38;
+  --simpson-brown: #8B5E34;
+  --simpson-white: #FFFFFF;
+  --simpson-dark: #1a1a2e;
+
+  /* Pixel Border Styles */
+  --pixel-border: 4px solid;
+  --pixel-border-width: 4px;
+
+  /* 8-bit Shadow (creates depth illusion) */
+  --pixel-shadow: 4px 4px 0px var(--simpson-brown);
+  --pixel-shadow-hover: 2px 2px 0px var(--simpson-brown);
+  --pixel-shadow-active: 0px 0px 0px var(--simpson-brown);
+
+  /* Font families */
+  --font-pixel: "Press Start 2P", monospace;
+  --font-pixel-body: "VT323", monospace;
+}
+
+/* Pixel border utility - creates stepped pixelated border effect */
+.pixel-border {
+  border: var(--pixel-border) var(--simpson-brown);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* 8-bit box shadow effect */
+.pixel-shadow {
+  box-shadow: var(--pixel-shadow);
+  transition: box-shadow 0.1s ease-out, transform 0.1s ease-out;
+}
+
+.pixel-shadow:hover {
+  box-shadow: var(--pixel-shadow-hover);
+  transform: translate(2px, 2px);
+}
+
+.pixel-shadow:active {
+  box-shadow: var(--pixel-shadow-active);
+  transform: translate(4px, 4px);
+}
+
+/* Pixelated text rendering */
+.pixel-text {
+  font-family: var(--font-pixel);
+  font-smooth: never;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+  text-rendering: optimizeSpeed;
+}
+
+.pixel-body-text {
+  font-family: var(--font-pixel-body);
+  font-smooth: never;
+  -webkit-font-smoothing: none;
+}
+
+/* 8-bit button press animation */
+@keyframes pixel-press {
+  0% {
+    transform: translate(0, 0);
+    box-shadow: var(--pixel-shadow);
+  }
+  50% {
+    transform: translate(4px, 4px);
+    box-shadow: var(--pixel-shadow-active);
+  }
+  100% {
+    transform: translate(0, 0);
+    box-shadow: var(--pixel-shadow);
+  }
+}
+
+.pixel-press {
+  animation: pixel-press 0.15s ease-out;
+}
+
+/* Scanline overlay effect for retro CRT look */
+.scanlines::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1) 0px,
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+}
+
+/* Pixelated focus ring */
+.pixel-focus:focus-visible {
+  outline: 4px dashed var(--simpson-yellow);
+  outline-offset: 4px;
+}
+
+/* Progress bar fill animation */
+@keyframes pixel-fill {
+  from {
+    width: 0%;
+  }
+}
+
+/* Retro blinking cursor */
+@keyframes pixel-blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.pixel-cursor::after {
+  content: "_";
+  animation: pixel-blink 1s step-end infinite;
+}
