@@ -1,0 +1,21 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "956db825d208ab47b4b89eb4f67a2df948c425055405da8cc5f7fc37d474202b": {
+      "displayName": "RalphFargate-dev Template",
+      "source": {
+        "path": "RalphFargate-dev.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "088442357834-us-east-1-30bac4c7": {
+          "bucketName": "cdk-hnb659fds-assets-088442357834-us-east-1",
+          "objectKey": "956db825d208ab47b4b89eb4f67a2df948c425055405da8cc5f7fc37d474202b.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::088442357834:role/cdk-hnb659fds-file-publishing-role-088442357834-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

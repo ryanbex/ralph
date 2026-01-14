@@ -1,0 +1,855 @@
+{
+ "Resources": {
+  "ConnectionsTable8000B8A1": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "connectionId",
+      "AttributeType": "S"
+     },
+     {
+      "AttributeName": "workstreamId",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "GlobalSecondaryIndexes": [
+     {
+      "IndexName": "workstream-index",
+      "KeySchema": [
+       {
+        "AttributeName": "workstreamId",
+        "KeyType": "HASH"
+       }
+      ],
+      "Projection": {
+       "ProjectionType": "ALL"
+      }
+     }
+    ],
+    "KeySchema": [
+     {
+      "AttributeName": "connectionId",
+      "KeyType": "HASH"
+     }
+    ],
+    "TableName": "ralph-ws-connections-dev",
+    "TimeToLiveSpecification": {
+     "AttributeName": "ttl",
+     "Enabled": true
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/ConnectionsTable/Resource"
+   }
+  },
+  "ConnectHandlerServiceRole7E4A9B1F": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/ConnectHandler/ServiceRole/Resource"
+   }
+  },
+  "ConnectHandlerServiceRoleDefaultPolicy7DE94863": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateItem"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "ConnectionsTable8000B8A1",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "ConnectionsTable8000B8A1",
+             "Arn"
+            ]
+           },
+           "/index/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ConnectHandlerServiceRoleDefaultPolicy7DE94863",
+    "Roles": [
+     {
+      "Ref": "ConnectHandlerServiceRole7E4A9B1F"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/ConnectHandler/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "ConnectHandler2FFD52D8": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-088442357834-us-east-1",
+     "S3Key": "a6afed92eeeaa8a7a01d784c59c4f35650e5a9fe542cf044f89cda9e3d2d68c1.zip"
+    },
+    "Description": "Handles WebSocket $connect route",
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "ENVIRONMENT": "dev"
+     }
+    },
+    "FunctionName": "ralph-ws-connect-dev",
+    "Handler": "index.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "ConnectHandlerServiceRole7E4A9B1F",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 30
+   },
+   "DependsOn": [
+    "ConnectHandlerServiceRoleDefaultPolicy7DE94863",
+    "ConnectHandlerServiceRole7E4A9B1F"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/ConnectHandler/Resource",
+    "aws:asset:path": "asset.a6afed92eeeaa8a7a01d784c59c4f35650e5a9fe542cf044f89cda9e3d2d68c1",
+    "aws:asset:is-bundled": true,
+    "aws:asset:property": "Code"
+   }
+  },
+  "DisconnectHandlerServiceRoleE54F14F9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/DisconnectHandler/ServiceRole/Resource"
+   }
+  },
+  "DisconnectHandlerServiceRoleDefaultPolicy1800B9E5": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateItem"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "ConnectionsTable8000B8A1",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "ConnectionsTable8000B8A1",
+             "Arn"
+            ]
+           },
+           "/index/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "DisconnectHandlerServiceRoleDefaultPolicy1800B9E5",
+    "Roles": [
+     {
+      "Ref": "DisconnectHandlerServiceRoleE54F14F9"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/DisconnectHandler/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "DisconnectHandlerCB7ED6F7": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-088442357834-us-east-1",
+     "S3Key": "2b4642e53856bbe96f28e2d2a9b80b0e93f2917670a6045037567772d031ca57.zip"
+    },
+    "Description": "Handles WebSocket $disconnect route",
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "ENVIRONMENT": "dev"
+     }
+    },
+    "FunctionName": "ralph-ws-disconnect-dev",
+    "Handler": "index.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "DisconnectHandlerServiceRoleE54F14F9",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 30
+   },
+   "DependsOn": [
+    "DisconnectHandlerServiceRoleDefaultPolicy1800B9E5",
+    "DisconnectHandlerServiceRoleE54F14F9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/DisconnectHandler/Resource",
+    "aws:asset:path": "asset.2b4642e53856bbe96f28e2d2a9b80b0e93f2917670a6045037567772d031ca57",
+    "aws:asset:is-bundled": true,
+    "aws:asset:property": "Code"
+   }
+  },
+  "SendLogsHandlerServiceRoleBDBA90A6": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/SendLogsHandler/ServiceRole/Resource"
+   }
+  },
+  "SendLogsHandlerServiceRoleDefaultPolicy241479EE": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateItem"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "ConnectionsTable8000B8A1",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "ConnectionsTable8000B8A1",
+             "Arn"
+            ]
+           },
+           "/index/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "execute-api:ManageConnections",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:execute-api:us-east-1:088442357834:",
+          {
+           "Ref": "WebSocketApi34BCF99B"
+          },
+          "/dev/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "SendLogsHandlerServiceRoleDefaultPolicy241479EE",
+    "Roles": [
+     {
+      "Ref": "SendLogsHandlerServiceRoleBDBA90A6"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/SendLogsHandler/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "SendLogsHandler83F13046": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-088442357834-us-east-1",
+     "S3Key": "53929b3c8be5bbad26840a200bddcd2a0e06b68b3e88e9f47a26eb9cb575c916.zip"
+    },
+    "Description": "Broadcasts logs to connected WebSocket clients",
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "ENVIRONMENT": "dev",
+      "WEBSOCKET_ENDPOINT": {
+       "Fn::Join": [
+        "",
+        [
+         "https://",
+         {
+          "Ref": "WebSocketApi34BCF99B"
+         },
+         ".execute-api.us-east-1.amazonaws.com/dev"
+        ]
+       ]
+      }
+     }
+    },
+    "FunctionName": "ralph-ws-sendlogs-dev",
+    "Handler": "index.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "SendLogsHandlerServiceRoleBDBA90A6",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 60
+   },
+   "DependsOn": [
+    "SendLogsHandlerServiceRoleDefaultPolicy241479EE",
+    "SendLogsHandlerServiceRoleBDBA90A6"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/SendLogsHandler/Resource",
+    "aws:asset:path": "asset.53929b3c8be5bbad26840a200bddcd2a0e06b68b3e88e9f47a26eb9cb575c916",
+    "aws:asset:is-bundled": true,
+    "aws:asset:property": "Code"
+   }
+  },
+  "WebSocketApi34BCF99B": {
+   "Type": "AWS::ApiGatewayV2::Api",
+   "Properties": {
+    "Description": "Ralph real-time log streaming WebSocket API",
+    "Name": "ralph-websocket-dev",
+    "ProtocolType": "WEBSOCKET",
+    "RouteSelectionExpression": "$request.body.action"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/Resource"
+   }
+  },
+  "WebSocketApiconnectRouteConnectIntegrationPermission39398969": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "ConnectHandler2FFD52D8",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:088442357834:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$connect"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$connect-Route/ConnectIntegration-Permission"
+   }
+  },
+  "WebSocketApiconnectRouteConnectIntegration7F1E0FDE": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "ConnectHandler2FFD52D8",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$connect-Route/ConnectIntegration/Resource"
+   }
+  },
+  "WebSocketApiconnectRoute846149DD": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$connect",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApiconnectRouteConnectIntegration7F1E0FDE"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$connect-Route/Resource"
+   }
+  },
+  "WebSocketApidisconnectRouteDisconnectIntegrationPermissionAE705904": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "DisconnectHandlerCB7ED6F7",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:088442357834:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$disconnect"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$disconnect-Route/DisconnectIntegration-Permission"
+   }
+  },
+  "WebSocketApidisconnectRouteDisconnectIntegration94C91381": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "DisconnectHandlerCB7ED6F7",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$disconnect-Route/DisconnectIntegration/Resource"
+   }
+  },
+  "WebSocketApidisconnectRouteC181A19C": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$disconnect",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApidisconnectRouteDisconnectIntegration94C91381"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$disconnect-Route/Resource"
+   }
+  },
+  "WebSocketApidefaultRouteDefaultIntegrationPermission0418F15D": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "SendLogsHandler83F13046",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:execute-api:us-east-1:088442357834:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$default"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$default-Route/DefaultIntegration-Permission"
+   }
+  },
+  "WebSocketApidefaultRouteDefaultIntegration0865A209": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "SendLogsHandler83F13046",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$default-Route/DefaultIntegration/Resource"
+   }
+  },
+  "WebSocketApidefaultRoute05EFD2FA": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$default",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApidefaultRouteDefaultIntegration0865A209"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketApi/$default-Route/Resource"
+   }
+  },
+  "WebSocketStageC46B7E43": {
+   "Type": "AWS::ApiGatewayV2::Stage",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AutoDeploy": true,
+    "StageName": "dev"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/WebSocketStage/Resource"
+   }
+  },
+  "LogSubscriptionFilterCanInvokeLambdaD601FB53": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "SendLogsHandler83F13046",
+      "Arn"
+     ]
+    },
+    "Principal": "logs.amazonaws.com",
+    "SourceArn": {
+     "Fn::ImportValue": "RalphFargate-dev:ExportsOutputFnGetAttWorkstreamLogsA75DCCE9ArnD4E9DBA2"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/LogSubscriptionFilter/CanInvokeLambda"
+   }
+  },
+  "LogSubscriptionFilter4C618026": {
+   "Type": "AWS::Logs::SubscriptionFilter",
+   "Properties": {
+    "DestinationArn": {
+     "Fn::GetAtt": [
+      "SendLogsHandler83F13046",
+      "Arn"
+     ]
+    },
+    "FilterName": "ralph-ws-subscription-dev",
+    "FilterPattern": "",
+    "LogGroupName": {
+     "Fn::ImportValue": "RalphFargate-dev:ExportsOutputRefWorkstreamLogsA75DCCE96CE0D28A"
+    }
+   },
+   "DependsOn": [
+    "LogSubscriptionFilterCanInvokeLambdaD601FB53"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/LogSubscriptionFilter/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/2VQQWrDMBB8S+7KtrXTBySBQC5tsQs9hrW8MZvYkvFKCUHo70Vym0J6mpllZmC2gKJcwcsCr7LU7XnZcwOhdqjPCq9yCO3N4GDbBsInNj2p7dFkElWPQ9PiwdiWTgJvGXbeaMfWKMYBQmXnQMYP27O+JTmzqKQ8oAg5gXUCJSVsvD6T26DQTz2E7dHcW1OYpoFF2JqocOQOHV3xdikgfFFT2xRfj5ycCe63ynpHf3JvHHUT/pY+yAdz7bDLOzKJqredQKh9I3riMYV23DuasuXfNUZVkVg/aVJ5Z2ph0yX3u3ejd1GlH8JJni7FCl7heXES5uXkjeOBoJrxG4SMmlGpAQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphWebSocket-dev/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "WebSocketApiId": {
+   "Description": "WebSocket API ID",
+   "Value": {
+    "Ref": "WebSocketApi34BCF99B"
+   },
+   "Export": {
+    "Name": "ralph-websocket-api-id-dev"
+   }
+  },
+  "WebSocketEndpoint": {
+   "Description": "WebSocket Endpoint URL",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "wss://",
+      {
+       "Ref": "WebSocketApi34BCF99B"
+      },
+      ".execute-api.us-east-1.amazonaws.com/dev"
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "ralph-websocket-endpoint-dev"
+   }
+  },
+  "ConnectionsTableName": {
+   "Description": "DynamoDB Connections Table Name",
+   "Value": {
+    "Ref": "ConnectionsTable8000B8A1"
+   },
+   "Export": {
+    "Name": "ralph-connections-table-dev"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

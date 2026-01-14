@@ -1,0 +1,737 @@
+{
+ "Resources": {
+  "RalphVpc932D0DC9": {
+   "Type": "AWS::EC2::VPC",
+   "Properties": {
+    "CidrBlock": "10.0.0.0/16",
+    "EnableDnsHostnames": true,
+    "EnableDnsSupport": true,
+    "InstanceTenancy": "default",
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "ralph-dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/Resource"
+   }
+  },
+  "RalphVpcpublicSubnet1Subnet341E3469": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "us-east-1a",
+    "CidrBlock": "10.0.0.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "public"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "RalphFargate-dev/RalphVpc/publicSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet1/Subnet"
+   }
+  },
+  "RalphVpcpublicSubnet1RouteTableBD3226AC": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "RalphFargate-dev/RalphVpc/publicSubnet1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet1/RouteTable"
+   }
+  },
+  "RalphVpcpublicSubnet1RouteTableAssociation06FCCC1E": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "RalphVpcpublicSubnet1RouteTableBD3226AC"
+    },
+    "SubnetId": {
+     "Ref": "RalphVpcpublicSubnet1Subnet341E3469"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet1/RouteTableAssociation"
+   }
+  },
+  "RalphVpcpublicSubnet1DefaultRouteD926D1B6": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "RalphVpcIGW0DD67920"
+    },
+    "RouteTableId": {
+     "Ref": "RalphVpcpublicSubnet1RouteTableBD3226AC"
+    }
+   },
+   "DependsOn": [
+    "RalphVpcVPCGW972AD58F"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet1/DefaultRoute"
+   }
+  },
+  "RalphVpcpublicSubnet2SubnetB304A0DA": {
+   "Type": "AWS::EC2::Subnet",
+   "Properties": {
+    "AvailabilityZone": "us-east-1b",
+    "CidrBlock": "10.0.1.0/24",
+    "MapPublicIpOnLaunch": true,
+    "Tags": [
+     {
+      "Key": "aws-cdk:subnet-name",
+      "Value": "public"
+     },
+     {
+      "Key": "aws-cdk:subnet-type",
+      "Value": "Public"
+     },
+     {
+      "Key": "Name",
+      "Value": "RalphFargate-dev/RalphVpc/publicSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet2/Subnet"
+   }
+  },
+  "RalphVpcpublicSubnet2RouteTableC1A96A01": {
+   "Type": "AWS::EC2::RouteTable",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "RalphFargate-dev/RalphVpc/publicSubnet2"
+     }
+    ],
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet2/RouteTable"
+   }
+  },
+  "RalphVpcpublicSubnet2RouteTableAssociation3EF70A41": {
+   "Type": "AWS::EC2::SubnetRouteTableAssociation",
+   "Properties": {
+    "RouteTableId": {
+     "Ref": "RalphVpcpublicSubnet2RouteTableC1A96A01"
+    },
+    "SubnetId": {
+     "Ref": "RalphVpcpublicSubnet2SubnetB304A0DA"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet2/RouteTableAssociation"
+   }
+  },
+  "RalphVpcpublicSubnet2DefaultRoute57F38E66": {
+   "Type": "AWS::EC2::Route",
+   "Properties": {
+    "DestinationCidrBlock": "0.0.0.0/0",
+    "GatewayId": {
+     "Ref": "RalphVpcIGW0DD67920"
+    },
+    "RouteTableId": {
+     "Ref": "RalphVpcpublicSubnet2RouteTableC1A96A01"
+    }
+   },
+   "DependsOn": [
+    "RalphVpcVPCGW972AD58F"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/publicSubnet2/DefaultRoute"
+   }
+  },
+  "RalphVpcIGW0DD67920": {
+   "Type": "AWS::EC2::InternetGateway",
+   "Properties": {
+    "Tags": [
+     {
+      "Key": "Name",
+      "Value": "ralph-dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/IGW"
+   }
+  },
+  "RalphVpcVPCGW972AD58F": {
+   "Type": "AWS::EC2::VPCGatewayAttachment",
+   "Properties": {
+    "InternetGatewayId": {
+     "Ref": "RalphVpcIGW0DD67920"
+    },
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphVpc/VPCGW"
+   }
+  },
+  "WorkstreamLogsA75DCCE9": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/ralph/workstreams/dev",
+    "RetentionInDays": 7
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/WorkstreamLogs/Resource"
+   }
+  },
+  "WorkerRepository770852D6": {
+   "Type": "AWS::ECR::Repository",
+   "Properties": {
+    "EmptyOnDelete": true,
+    "ImageScanningConfiguration": {
+     "ScanOnPush": true
+    },
+    "LifecyclePolicy": {
+     "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep only 10 most recent images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":10},\"action\":{\"type\":\"expire\"}}]}"
+    },
+    "RepositoryName": "ralph-worker-dev"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/WorkerRepository/Resource"
+   }
+  },
+  "RalphClusterC1E39221": {
+   "Type": "AWS::ECS::Cluster",
+   "Properties": {
+    "ClusterName": "ralph-dev",
+    "ClusterSettings": [
+     {
+      "Name": "containerInsights",
+      "Value": "disabled"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphCluster/Resource"
+   }
+  },
+  "RalphClusterFCAEBFA4": {
+   "Type": "AWS::ECS::ClusterCapacityProviderAssociations",
+   "Properties": {
+    "CapacityProviders": [
+     "FARGATE",
+     "FARGATE_SPOT"
+    ],
+    "Cluster": {
+     "Ref": "RalphClusterC1E39221"
+    },
+    "DefaultCapacityProviderStrategy": []
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/RalphCluster/RalphCluster"
+   }
+  },
+  "TaskExecutionRole250D2532": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+       ]
+      ]
+     }
+    ],
+    "RoleName": "ralph-task-execution-dev"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/TaskExecutionRole/Resource"
+   }
+  },
+  "TaskExecutionRoleDefaultPolicyA84DD1B0": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WorkerRepository770852D6",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WorkstreamLogsA75DCCE9",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "RalphSecrets-dev:ExportsOutputRefAnthropicKeySecretB58006D306DAE380"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "TaskExecutionRoleDefaultPolicyA84DD1B0",
+    "Roles": [
+     {
+      "Ref": "TaskExecutionRole250D2532"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/TaskExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "TaskRole30FC0FBB": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "RoleName": "ralph-task-dev"
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/TaskRole/Resource"
+   }
+  },
+  "TaskRoleDefaultPolicy07FC53DE": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "RalphSecrets-dev:ExportsOutputRefAnthropicKeySecretB58006D306DAE380"
+       }
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WorkstreamLogsA75DCCE9",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "TaskRoleDefaultPolicy07FC53DE",
+    "Roles": [
+     {
+      "Ref": "TaskRole30FC0FBB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "WorkerTaskDefinition8AD2CCFF": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "RALPH_ENV",
+        "Value": "dev"
+       },
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "echo healthy || exit 1"
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "WorkerRepository770852D6",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::GetAtt": [
+               "WorkerRepository770852D6",
+               "Arn"
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Ref": "WorkerRepository770852D6"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WorkstreamLogsA75DCCE9"
+        },
+        "awslogs-stream-prefix": "worker",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "ralph-worker",
+      "Secrets": [
+       {
+        "Name": "ANTHROPIC_API_KEY",
+        "ValueFrom": {
+         "Fn::ImportValue": "RalphSecrets-dev:ExportsOutputRefAnthropicKeySecretB58006D306DAE380"
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "1024",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "TaskExecutionRole250D2532",
+      "Arn"
+     ]
+    },
+    "Family": "ralph-worker-dev",
+    "Memory": "2048",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "RuntimePlatform": {
+     "CpuArchitecture": "X86_64",
+     "OperatingSystemFamily": "LINUX"
+    },
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "TaskRole30FC0FBB",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/WorkerTaskDefinition/Resource"
+   }
+  },
+  "TaskSecurityGroup2D2EA438": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Security group for Ralph worker tasks",
+    "GroupName": "ralph-task-dev",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "VpcId": {
+     "Ref": "RalphVpc932D0DC9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/TaskSecurityGroup/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/2WQ3WrDMAyFn6X3rrdl3QOUjJXBYCEdvR2Kq2ZqUytYcksxefeR9Cdlu9LRpwPHx5nNnmf2aQJHmbr1btpQZdNSwe0MHOU7octsWrXO5Bu/KnJTxKoht4yVR+3ZqEqOil9QNTjykc1F2BEosb+Ze/HuFYNHXYDiEU6XmMs2VwX3s0evZokuBtLTInBsh4B70JmGa7Hpg+ub4ao7gy7YVGLLQsphyBi3/iw25U0UxdDf/sscWnCkpyLwgdYY7sqIeYNQQ99Sdq+4IU/Xjn8JewXyGEbWGYK9TSWf/2yYBTfkhjeeVdeZEoVjcIPnM2obtTOe12i38nDIZvbFPk62QjQN0Svt0Zbn+QtERs7r3AEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "RalphFargate-dev/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "ClusterArn": {
+   "Description": "ECS Cluster ARN",
+   "Value": {
+    "Fn::GetAtt": [
+     "RalphClusterC1E39221",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "ralph-cluster-arn-dev"
+   }
+  },
+  "TaskDefinitionArn": {
+   "Description": "Task Definition ARN",
+   "Value": {
+    "Ref": "WorkerTaskDefinition8AD2CCFF"
+   },
+   "Export": {
+    "Name": "ralph-task-definition-arn-dev"
+   }
+  },
+  "LogGroupName": {
+   "Description": "CloudWatch Log Group Name",
+   "Value": {
+    "Ref": "WorkstreamLogsA75DCCE9"
+   },
+   "Export": {
+    "Name": "ralph-log-group-dev"
+   }
+  },
+  "RepositoryUri": {
+   "Description": "ECR Repository URI",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      {
+       "Fn::Select": [
+        4,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "WorkerRepository770852D6",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".dkr.ecr.",
+      {
+       "Fn::Select": [
+        3,
+        {
+         "Fn::Split": [
+          ":",
+          {
+           "Fn::GetAtt": [
+            "WorkerRepository770852D6",
+            "Arn"
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      ".",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/",
+      {
+       "Ref": "WorkerRepository770852D6"
+      }
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "ralph-repository-uri-dev"
+   }
+  },
+  "VpcId": {
+   "Description": "VPC ID",
+   "Value": {
+    "Ref": "RalphVpc932D0DC9"
+   },
+   "Export": {
+    "Name": "ralph-vpc-id-dev"
+   }
+  },
+  "TaskSecurityGroupId": {
+   "Description": "Task Security Group ID",
+   "Value": {
+    "Fn::GetAtt": [
+     "TaskSecurityGroup2D2EA438",
+     "GroupId"
+    ]
+   },
+   "Export": {
+    "Name": "ralph-task-sg-dev"
+   }
+  },
+  "ExportsOutputFnGetAttWorkstreamLogsA75DCCE9ArnD4E9DBA2": {
+   "Value": {
+    "Fn::GetAtt": [
+     "WorkstreamLogsA75DCCE9",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "RalphFargate-dev:ExportsOutputFnGetAttWorkstreamLogsA75DCCE9ArnD4E9DBA2"
+   }
+  },
+  "ExportsOutputRefWorkstreamLogsA75DCCE96CE0D28A": {
+   "Value": {
+    "Ref": "WorkstreamLogsA75DCCE9"
+   },
+   "Export": {
+    "Name": "RalphFargate-dev:ExportsOutputRefWorkstreamLogsA75DCCE96CE0D28A"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
