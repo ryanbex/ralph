@@ -1,0 +1,19 @@
+# Sprites Directory
+
+This directory will contain pixel art sprites for the Ralph Web UI.
+
+## Planned Sprite Assets
+
+- ralph-idle.png - Ralph character idle state
+- ralph-thinking.png - Ralph thinking/processing animation
+- ralph-working.png - Ralph actively working animation
+- ralph-success.png - Ralph celebration/success state
+- ralph-error.png - Ralph error/confused state
+- ralph-waiting.png - Ralph waiting for input state
+
+## Sprite Guidelines
+
+- All sprites should be 32x32 or 64x64 pixels
+- Use indexed color palette matching Simpsons theme
+- Export as PNG with transparency
+- Name format: {character}-{state}.png
