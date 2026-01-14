@@ -1,160 +1,108 @@
+import { auth } from "@/lib/auth"
+import { SignInButton, SignOutButton, UserAvatar } from "@/components/auth"
+import Link from "next/link"
 import {
   PixelButton,
   PixelCard,
   PixelCardHeader,
   PixelCardTitle,
   PixelCardContent,
-  PixelProgress,
-  PixelInput,
   RalphSprite,
-} from "@/components/pixel";
+} from "@/components/pixel"
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth()
+
   return (
     <main className="min-h-screen bg-simpson-dark p-8">
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center space-y-4">
-          <h1 className="font-pixel text-2xl text-simpson-yellow">
-            RALPH WEB
-          </h1>
+          <RalphSprite state={session ? "success" : "idle"} size="lg" />
+          <h1 className="font-pixel text-2xl text-simpson-yellow">RALPH WEB</h1>
           <p className="font-pixel-body text-xl text-simpson-white">
-            8-bit Pixel Art Theme Demo
+            Cloud-native platform for autonomous AI development workstreams
           </p>
         </div>
 
-        {/* Ralph Sprites */}
-        <PixelCard>
+        {/* Auth Card */}
+        <PixelCard variant="elevated">
           <PixelCardHeader>
-            <PixelCardTitle>Ralph Sprites</PixelCardTitle>
+            <PixelCardTitle>
+              {session ? "Welcome Back!" : "Get Started"}
+            </PixelCardTitle>
           </PixelCardHeader>
           <PixelCardContent>
-            <div className="flex flex-wrap gap-6 items-end">
-              <div className="text-center">
-                <RalphSprite state="idle" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">IDLE</p>
+            {session ? (
+              <div className="flex flex-col items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <UserAvatar size={48} />
+                  <div>
+                    <p className="font-pixel text-sm text-simpson-yellow">
+                      {session.user.name}
+                    </p>
+                    <p className="font-pixel-body text-simpson-white">
+                      @{session.user.githubUsername}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-3 flex-wrap justify-center">
+                  <Link href="/dashboard">
+                    <PixelButton variant="primary">DASHBOARD</PixelButton>
+                  </Link>
+                  <Link href="/settings">
+                    <PixelButton variant="secondary">SETTINGS</PixelButton>
+                  </Link>
+                  <SignOutButton />
+                </div>
               </div>
-              <div className="text-center">
-                <RalphSprite state="thinking" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">THINKING</p>
+            ) : (
+              <div className="flex flex-col items-center gap-4">
+                <p className="font-pixel-body text-simpson-white text-center">
+                  Sign in with GitHub to start managing your AI workstreams
+                </p>
+                <SignInButton />
               </div>
-              <div className="text-center">
-                <RalphSprite state="working" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">WORKING</p>
-              </div>
-              <div className="text-center">
-                <RalphSprite state="success" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">SUCCESS</p>
-              </div>
-              <div className="text-center">
-                <RalphSprite state="error" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">ERROR</p>
-              </div>
-              <div className="text-center">
-                <RalphSprite state="waiting" size="lg" />
-                <p className="mt-2 font-pixel text-[8px]">WAITING</p>
-              </div>
-            </div>
+            )}
           </PixelCardContent>
         </PixelCard>
 
-        {/* Buttons */}
-        <PixelCard>
-          <PixelCardHeader>
-            <PixelCardTitle>Pixel Buttons</PixelCardTitle>
-          </PixelCardHeader>
-          <PixelCardContent>
-            <div className="flex flex-wrap gap-4">
-              <PixelButton variant="primary">PRIMARY</PixelButton>
-              <PixelButton variant="secondary">SECONDARY</PixelButton>
-              <PixelButton variant="success">SUCCESS</PixelButton>
-              <PixelButton variant="danger">DANGER</PixelButton>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-4">
-              <PixelButton size="sm">SMALL</PixelButton>
-              <PixelButton size="md">MEDIUM</PixelButton>
-              <PixelButton size="lg">LARGE</PixelButton>
-            </div>
-          </PixelCardContent>
-        </PixelCard>
-
-        {/* Progress Bars */}
-        <PixelCard>
-          <PixelCardHeader>
-            <PixelCardTitle>Progress Bars</PixelCardTitle>
-          </PixelCardHeader>
-          <PixelCardContent>
-            <div className="space-y-4">
-              <div>
-                <p className="font-pixel text-[8px] mb-2">DEFAULT (75%)</p>
-                <PixelProgress value={75} showLabel />
-              </div>
-              <div>
-                <p className="font-pixel text-[8px] mb-2">SUCCESS (100%)</p>
-                <PixelProgress value={100} variant="success" showLabel />
-              </div>
-              <div>
-                <p className="font-pixel text-[8px] mb-2">WARNING (50%)</p>
-                <PixelProgress value={50} variant="warning" showLabel />
-              </div>
-              <div>
-                <p className="font-pixel text-[8px] mb-2">DANGER (25%)</p>
-                <PixelProgress value={25} variant="danger" showLabel />
-              </div>
-            </div>
-          </PixelCardContent>
-        </PixelCard>
-
-        {/* Input Fields */}
-        <PixelCard>
-          <PixelCardHeader>
-            <PixelCardTitle>Input Fields</PixelCardTitle>
-          </PixelCardHeader>
-          <PixelCardContent>
-            <div className="space-y-4">
-              <PixelInput
-                label="WORKSTREAM NAME"
-                placeholder="Enter workstream name..."
-              />
-              <PixelInput
-                label="WITH ERROR"
-                placeholder="Enter something..."
-                error="This field has an error!"
-              />
-            </div>
-          </PixelCardContent>
-        </PixelCard>
-
-        {/* Card Variants */}
+        {/* Features Preview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <PixelCard variant="default">
+          <PixelCard>
             <PixelCardHeader>
-              <PixelCardTitle>Default Card</PixelCardTitle>
+              <PixelCardTitle>Autonomous AI</PixelCardTitle>
             </PixelCardHeader>
             <PixelCardContent>
-              Standard card with brown border
+              <p className="font-pixel-body text-simpson-white">
+                AI workstreams that code autonomously on your behalf
+              </p>
             </PixelCardContent>
           </PixelCard>
 
-          <PixelCard variant="elevated">
+          <PixelCard>
             <PixelCardHeader>
-              <PixelCardTitle>Elevated Card</PixelCardTitle>
+              <PixelCardTitle>Real-time Logs</PixelCardTitle>
             </PixelCardHeader>
             <PixelCardContent>
-              Yellow border and shadow
+              <p className="font-pixel-body text-simpson-white">
+                Watch progress live as Claude iterates on your code
+              </p>
             </PixelCardContent>
           </PixelCard>
 
-          <PixelCard variant="outlined">
+          <PixelCard>
             <PixelCardHeader>
-              <PixelCardTitle>Outlined Card</PixelCardTitle>
+              <PixelCardTitle>Git Native</PixelCardTitle>
             </PixelCardHeader>
             <PixelCardContent>
-              Transparent background
+              <p className="font-pixel-body text-simpson-white">
+                All work happens on branches - you control the merge
+              </p>
             </PixelCardContent>
           </PixelCard>
         </div>
       </div>
     </main>
-  );
+  )
 }
