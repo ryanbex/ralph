@@ -53,6 +53,63 @@ notify() {
     fi
 }
 
+# Archive workstream metrics before cleanup
+archive_workstream() {
+    local project="$1"
+    local workstream="$2"
+    local final_status="$3"
+
+    local state_dir="$RALPH_HOME/state/${project}/${workstream}"
+    local metrics_file="${state_dir}/metrics.json"
+    local history_file="$RALPH_HOME/archive/history.json"
+
+    if [[ -f "$metrics_file" ]]; then
+        mkdir -p "$RALPH_HOME/archive"
+
+        # Build record with project/workstream/status/end_time
+        local record
+        record=$(jq -c --arg p "$project" --arg w "$workstream" \
+                      --arg s "$final_status" \
+                      --arg et "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                      '. + {project: $p, workstream: $w, status: $s, end_time: $et}' \
+                      "$metrics_file" 2>/dev/null)
+
+        if [[ -n "$record" ]]; then
+            echo "$record" >> "$history_file"
+            log "Archived metrics for ${project}/${workstream}"
+        fi
+    fi
+}
+
+# Calculate duration between two ISO timestamps
+format_duration_between() {
+    local start_time="$1"
+    local end_time="$2"
+
+    if [[ -z "$start_time" || -z "$end_time" || "$start_time" == "null" || "$end_time" == "null" ]]; then
+        echo "-"
+        return
+    fi
+
+    local start_sec end_sec diff
+    start_sec=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$start_time" +%s 2>/dev/null || echo 0)
+    end_sec=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$end_time" +%s 2>/dev/null || echo 0)
+    diff=$((end_sec - start_sec))
+
+    if [[ $diff -lt 0 || $start_sec -eq 0 || $end_sec -eq 0 ]]; then
+        echo "-"
+        return
+    fi
+
+    if [[ $diff -ge 3600 ]]; then
+        printf "%dh %dm" $((diff/3600)) $(((diff%3600)/60))
+    elif [[ $diff -ge 60 ]]; then
+        printf "%dm" $((diff/60))
+    else
+        printf "%ds" $diff
+    fi
+}
+
 # Parse YAML value (simple)
 yaml_get() {
     local file="$1"
@@ -832,10 +889,10 @@ cmd_status() {
 
     # Table header
     echo ""
-    printf "┌────────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
-    printf "│ %-18s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
+    printf "┌─────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
+    printf "│ %-15s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
            "Workstream" "Status" "Progress" "Tokens" "Cost" "Duration"
-    printf "├────────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
+    printf "├─────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
 
     for ws in "${workstreams[@]}"; do
         local status iteration metrics
@@ -872,8 +929,11 @@ cmd_status() {
             *)           status_display="$status" ;;
         esac
 
+        # Truncate workstream name to 15 chars
+        local ws_short="${ws:0:15}"
+
         # Print row - use printf with -e for color codes
-        printf "│ %-18s │ " "$ws"
+        printf "│ %-15s │ " "$ws_short"
         printf "${status_display}"
         # Pad status column (8 chars visible, but colors add invisible chars)
         local visible_len=${#status}
@@ -882,7 +942,7 @@ cmd_status() {
                "" "$progress_fmt" "$tokens_fmt" "$cost_fmt" "$duration_fmt"
     done
 
-    printf "└────────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
+    printf "└─────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
     echo ""
 }
 
@@ -1075,6 +1135,14 @@ cmd_cleanup() {
         git branch -d "$branch" 2>/dev/null || true
     fi
 
+    # Archive metrics before cleanup
+    archive_workstream "$project" "$workstream" "MERGED"
+
+    # Clean up state
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    rm -rf "$state_dir"
+
     notify "Ralph Cleanup" "Merged ${project}/${workstream}"
     echo -e "${GREEN}Cleanup complete!${NC}"
 }
@@ -1208,6 +1276,11 @@ cmd_prune() {
             if $is_stale; then
                 echo -e "  ${YELLOW}${proj}/${ws}${NC} - $reason"
                 if ! $dry_run; then
+                    # Archive before pruning
+                    local final_status
+                    final_status=$(cat "$status_file" 2>/dev/null || echo "PRUNED")
+                    archive_workstream "$proj" "$ws" "$final_status"
+
                     rm -rf "$ws_dir"
                     # Also clean up logs if empty
                     local log_dir="$RALPH_HOME/logs/${proj}/${ws}"
@@ -1233,6 +1306,119 @@ cmd_prune() {
     else
         echo "No stale workstreams found"
     fi
+}
+
+cmd_history() {
+    local show_all=false
+    local project_filter=""
+
+    # Parse args
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --all|-a) show_all=true; shift ;;
+            *) project_filter="$1"; shift ;;
+        esac
+    done
+
+    local history_file="$RALPH_HOME/archive/history.json"
+
+    if [[ ! -f "$history_file" ]]; then
+        echo ""
+        echo "No history found"
+        echo ""
+        echo "History is recorded when workstreams are cleaned up, pruned, or auto-merged."
+        return
+    fi
+
+    # Build list of active workstreams to filter out (unless --all)
+    local active_list=""
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+        local proj
+        proj=$(basename "$project_file" .yaml)
+        for ws in $(get_workstreams "$proj"); do
+            active_list="${active_list}${proj}/${ws}"$'\n'
+        done
+    done
+
+    # Table header
+    echo ""
+    printf "┌─────────────────┬─────────────────┬──────────┬──────────┬─────────┬──────────┬────────────┐\n"
+    printf "│ %-15s │ %-15s │ %-8s │ %-8s │ %-7s │ %-8s │ %-10s │\n" \
+           "Project" "Workstream" "Status" "Tokens" "Cost" "Duration" "Date"
+    printf "├─────────────────┼─────────────────┼──────────┼──────────┼─────────┼──────────┼────────────┤\n"
+
+    local row_count=0
+
+    # Read history file and display
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local proj ws status tokens_in tokens_out cost start_time end_time
+        proj=$(echo "$line" | jq -r '.project // ""')
+        ws=$(echo "$line" | jq -r '.workstream // ""')
+        status=$(echo "$line" | jq -r '.status // "UNKNOWN"')
+        tokens_in=$(echo "$line" | jq -r '.tokens_in // 0')
+        tokens_out=$(echo "$line" | jq -r '.tokens_out // 0')
+        cost=$(echo "$line" | jq -r '.total_cost // 0')
+        start_time=$(echo "$line" | jq -r '.start_time // ""')
+        end_time=$(echo "$line" | jq -r '.end_time // ""')
+
+        # Skip empty records
+        [[ -z "$proj" || -z "$ws" ]] && continue
+
+        # Filter by project if specified
+        if [[ -n "$project_filter" ]] && [[ "$proj" != "$project_filter" ]]; then
+            continue
+        fi
+
+        # Skip active workstreams unless --all
+        if ! $show_all && echo "$active_list" | grep -q "^${proj}/${ws}$"; then
+            continue
+        fi
+
+        # Format values
+        local total_tokens=$((tokens_in + tokens_out))
+        local tokens_fmt cost_fmt duration_fmt date_fmt
+        tokens_fmt=$(format_tokens "$total_tokens")
+        cost_fmt=$(printf "\$%.2f" "$cost")
+        duration_fmt=$(format_duration_between "$start_time" "$end_time")
+        date_fmt=$(echo "$end_time" | cut -dT -f1)
+
+        # Truncate names to 15 chars
+        local proj_short="${proj:0:15}"
+        local ws_short="${ws:0:15}"
+
+        # Status with color (truncate to 8 chars for display)
+        local status_short="${status:0:8}"
+        local status_display
+        case "$status" in
+            COMPLETE|MERGED) status_display="${GREEN}${status_short}${NC}" ;;
+            STOPPED|PRUNED)  status_display="${DIM}${status_short}${NC}" ;;
+            ERROR)           status_display="${RED}${status_short}${NC}" ;;
+            *)               status_display="$status_short" ;;
+        esac
+
+        # Print row with color
+        printf "│ %-15s │ %-15s │ " "$proj_short" "$ws_short"
+        printf "${status_display}"
+        printf "%*s │ %-8s │ %-7s │ %-8s │ %-10s │\n" \
+               $((8 - ${#status_short})) "" "$tokens_fmt" "$cost_fmt" "$duration_fmt" "$date_fmt"
+
+        ((row_count++))
+    done < "$history_file"
+
+    printf "└─────────────────┴─────────────────┴──────────┴──────────┴─────────┴──────────┴────────────┘\n"
+
+    if [[ $row_count -eq 0 ]]; then
+        echo ""
+        if $show_all; then
+            echo "No workstream history recorded yet."
+        else
+            echo "No historical workstreams (use --all to include active)"
+        fi
+    fi
+    echo ""
 }
 
 #═══════════════════════════════════════════════════════════════
@@ -1272,10 +1458,10 @@ interactive_mode_global() {
     fi
 
     # Table header
-    printf "┌────────────────────┬────────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
-    printf "│ %-18s │ %-18s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
+    printf "┌─────────────────┬─────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┐\n"
+    printf "│ %-15s │ %-15s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │\n" \
            "Project" "Workstream" "Status" "Progress" "Tokens" "Cost" "Duration"
-    printf "├────────────────────┼────────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
+    printf "├─────────────────┼─────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┤\n"
 
     for row in "${all_rows[@]}"; do
         local project ws
@@ -1304,9 +1490,9 @@ interactive_mode_global() {
         duration_fmt=$(format_duration "$start_time")
         progress_fmt=$(printf "%2d/%-3d %2d%%" "$iteration" "$max_iter" "$progress_pct")
 
-        # Truncate long names
-        local proj_short="${project:0:18}"
-        local ws_short="${ws:0:18}"
+        # Truncate names to 15 chars
+        local proj_short="${project:0:15}"
+        local ws_short="${ws:0:15}"
 
         # Status with color
         local status_display
@@ -1320,14 +1506,10 @@ interactive_mode_global() {
             *)           status_display="$status" ;;
         esac
 
-        # Pad status for alignment (8 chars)
-        local status_padded
-        status_padded=$(printf "%-8s" "$status")
-
-        echo -e "│ $(printf '%-18s' "$proj_short") │ $(printf '%-18s' "$ws_short") │ ${status_display}$(printf '%*s' $((8 - ${#status})) '') │ $(printf '%-10s' "$progress_fmt") │ $(printf '%-8s' "$tokens_fmt") │ $(printf '%-7s' "$cost_fmt") │ $(printf '%-8s' "$duration_fmt") │"
+        echo -e "│ $(printf '%-15s' "$proj_short") │ $(printf '%-15s' "$ws_short") │ ${status_display}$(printf '%*s' $((8 - ${#status})) '') │ $(printf '%-10s' "$progress_fmt") │ $(printf '%-8s' "$tokens_fmt") │ $(printf '%-7s' "$cost_fmt") │ $(printf '%-8s' "$duration_fmt") │"
     done
 
-    printf "└────────────────────┴────────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
+    printf "└─────────────────┴─────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┘\n"
     echo ""
 }
 
@@ -1662,6 +1844,7 @@ cmd_help() {
     echo "  ralph                             Interactive dashboard"
     echo "  ralph recover                     Find orphaned workstreams"
     echo "  ralph prune [--dry-run]           Remove stale workstream state"
+    echo "  ralph history [--all] [project]   Show workstream history"
     echo "  ralph help                        Show this help"
     echo ""
     echo -e "${CYAN}Server (REST API):${NC}"
@@ -1750,6 +1933,9 @@ case $COMMAND in
         ;;
     prune)
         cmd_prune "$ARG1"
+        ;;
+    history)
+        cmd_history "${@:2}"
         ;;
     server)
         case ${ARG1:-help} in

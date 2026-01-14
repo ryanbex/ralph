@@ -136,6 +136,34 @@ get_base_branch() {
     fi
 }
 
+# Archive workstream metrics before cleanup
+archive_workstream() {
+    local project="$1"
+    local workstream="$2"
+    local final_status="$3"
+
+    local state_dir="$RALPH_HOME/state/${project}/${workstream}"
+    local metrics_file="${state_dir}/metrics.json"
+    local history_file="$RALPH_HOME/archive/history.json"
+
+    if [[ -f "$metrics_file" ]]; then
+        mkdir -p "$RALPH_HOME/archive"
+
+        # Build record with project/workstream/status/end_time
+        local record
+        record=$(jq -c --arg p "$project" --arg w "$workstream" \
+                      --arg s "$final_status" \
+                      --arg et "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                      '. + {project: $p, workstream: $w, status: $s, end_time: $et}' \
+                      "$metrics_file" 2>/dev/null)
+
+        if [[ -n "$record" ]]; then
+            echo "$record" >> "$history_file"
+            log "Archived metrics for ${project}/${workstream}"
+        fi
+    fi
+}
+
 # Perform auto-merge after completion
 auto_merge() {
     log "Auto-merge enabled, merging workstream..."
@@ -175,6 +203,9 @@ auto_merge_single_repo() {
 
         # Delete branch
         git branch -d "$branch" 2>/dev/null || git branch -D "$branch" 2>/dev/null || true
+
+        # Archive metrics before cleanup
+        archive_workstream "$PROJECT" "$WORKSTREAM" "COMPLETE"
 
         # Clean up state
         rm -rf "$STATE_DIR"
@@ -231,6 +262,9 @@ auto_merge_multi_repo() {
 
     # Remove unified worktree directory
     rmdir "$worktree_path" 2>/dev/null || rm -rf "$worktree_path" 2>/dev/null || true
+
+    # Archive metrics before cleanup
+    archive_workstream "$PROJECT" "$WORKSTREAM" "COMPLETE"
 
     # Clean up state
     rm -rf "$STATE_DIR"
