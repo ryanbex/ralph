@@ -570,7 +570,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
     # Run Claude and capture output for metrics
     set_status "RUNNING"
-    local claude_output
     claude_output=$(mktemp)
     if cat "$CLAUDE_INPUT" | claude --dangerously-skip-permissions 2>&1 | tee "$claude_output"; then
         EXIT_CODE=0
