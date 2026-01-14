@@ -206,6 +206,7 @@ auto_merge_single_repo() {
 
         # Archive metrics before cleanup
         archive_workstream "$PROJECT" "$WORKSTREAM" "COMPLETE"
+        touch "$STATE_DIR/.archived"
 
         # Clean up state
         rm -rf "$STATE_DIR"
@@ -265,6 +266,7 @@ auto_merge_multi_repo() {
 
     # Archive metrics before cleanup
     archive_workstream "$PROJECT" "$WORKSTREAM" "COMPLETE"
+    touch "$STATE_DIR/.archived"
 
     # Clean up state
     rm -rf "$STATE_DIR"
@@ -295,35 +297,61 @@ EOF
 }
 
 # Update metrics after each iteration
+# Takes path to JSON output file from claude --output-format json
 update_metrics() {
-    local log_output="$1"
+    local json_file="$1"
     local metrics_file="$STATE_DIR/metrics.json"
 
-    # Parse token counts from Claude Code output
-    # Look for patterns like "Input: 12345 tokens" or "tokens in: 12345"
-    local new_tokens_in new_tokens_out new_cost
-    new_tokens_in=$(echo "$log_output" | grep -oE '[0-9,]+\s*(input|in)\s*tokens?' | grep -oE '[0-9,]+' | tr -d ',' | tail -1)
-    new_tokens_out=$(echo "$log_output" | grep -oE '[0-9,]+\s*(output|out)\s*tokens?' | grep -oE '[0-9,]+' | tr -d ',' | tail -1)
-    new_cost=$(echo "$log_output" | grep -oE '\$[0-9]+\.[0-9]+' | tr -d '$' | tail -1)
+    # Validate JSON file exists and has content
+    if [[ ! -f "$json_file" ]] || [[ ! -s "$json_file" ]]; then
+        warn "No JSON output from Claude iteration $ITERATION - metrics not updated"
+        return 1
+    fi
+
+    # Parse from Claude JSON output (--output-format json)
+    local new_in new_out new_cost
+    new_in=$(jq -r '.usage.input_tokens // 0' "$json_file" 2>/dev/null)
+    new_out=$(jq -r '.usage.output_tokens // 0' "$json_file" 2>/dev/null)
+    new_cost=$(jq -r '.total_cost_usd // 0' "$json_file" 2>/dev/null)
+
+    # Include cache tokens in input count (cache creation and reads are billed as input tokens)
+    local cache_create cache_read
+    cache_create=$(jq -r '.usage.cache_creation_input_tokens // 0' "$json_file" 2>/dev/null)
+    cache_read=$(jq -r '.usage.cache_read_input_tokens // 0' "$json_file" 2>/dev/null)
+
+    # Validate numeric values (jq can return "null" string instead of empty)
+    [[ "$new_in" =~ ^[0-9]+$ ]] || new_in=0
+    [[ "$new_out" =~ ^[0-9]+$ ]] || new_out=0
+    [[ "$new_cost" =~ ^[0-9.]+$ ]] || new_cost=0
+    [[ "$cache_create" =~ ^[0-9]+$ ]] || cache_create=0
+    [[ "$cache_read" =~ ^[0-9]+$ ]] || cache_read=0
+
+    new_in=$((new_in + cache_create + cache_read))
 
     # Read current metrics and update
     if [[ -f "$metrics_file" ]]; then
-        local current_in current_out current_cost iterations
-        current_in=$(jq -r '.tokens_in' "$metrics_file")
-        current_out=$(jq -r '.tokens_out' "$metrics_file")
-        current_cost=$(jq -r '.total_cost' "$metrics_file")
-        iterations=$(jq -r '.iterations_completed' "$metrics_file")
+        local cur_in cur_out cur_cost iters
+        cur_in=$(jq -r '.tokens_in // 0' "$metrics_file")
+        cur_out=$(jq -r '.tokens_out // 0' "$metrics_file")
+        cur_cost=$(jq -r '.total_cost // 0' "$metrics_file")
+        iters=$(jq -r '.iterations_completed // 0' "$metrics_file")
+
+        # Validate current values too
+        [[ "$cur_in" =~ ^[0-9]+$ ]] || cur_in=0
+        [[ "$cur_out" =~ ^[0-9]+$ ]] || cur_out=0
+        [[ "$cur_cost" =~ ^[0-9.]+$ ]] || cur_cost=0
+        [[ "$iters" =~ ^[0-9]+$ ]] || iters=0
 
         # Update with new values
-        local total_in=$((current_in + ${new_tokens_in:-0}))
-        local total_out=$((current_out + ${new_tokens_out:-0}))
+        local total_in=$((cur_in + new_in))
+        local total_out=$((cur_out + new_out))
         local total_cost
-        total_cost=$(echo "$current_cost + ${new_cost:-0}" | bc)
-        local new_iterations=$((iterations + 1))
+        total_cost=$(echo "$cur_cost + $new_cost" | bc -l)
+        local new_iters=$((iters + 1))
 
         # Write updated metrics
         jq --argjson ti "$total_in" --argjson to "$total_out" \
-           --arg tc "$total_cost" --argjson it "$new_iterations" \
+           --arg tc "$total_cost" --argjson it "$new_iters" \
            '.tokens_in = $ti | .tokens_out = $to | .total_cost = ($tc | tonumber) | .iterations_completed = $it' \
            "$metrics_file" > "${metrics_file}.tmp" && mv "${metrics_file}.tmp" "$metrics_file"
     fi
@@ -466,10 +494,12 @@ cleanup() {
 
     local status
     status=$(cat "$STATUS_FILE" 2>/dev/null || echo "UNKNOWN")
+    local final_status="$status"
 
     case "$status" in
-        RUNNING)
+        RUNNING|STOPPING)
             set_status "STOPPED"
+            final_status="STOPPED"
             ;;
         COMPLETE)
             notify "Ralph Complete" "${PROJECT}/${WORKSTREAM} completed successfully!"
@@ -478,6 +508,12 @@ cleanup() {
             notify "Ralph Error" "${PROJECT}/${WORKSTREAM} exited with error"
             ;;
     esac
+
+    # Archive workstream metrics on any exit (unless already archived by auto-merge)
+    if [[ -f "$STATE_DIR/metrics.json" ]] && [[ ! -f "$STATE_DIR/.archived" ]]; then
+        archive_workstream "$PROJECT" "$WORKSTREAM" "$final_status"
+        touch "$STATE_DIR/.archived"
+    fi
 
     log "Ralph loop exiting"
 }
@@ -568,20 +604,25 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         echo "6. If all tasks complete, write '## Status: COMPLETE' to PROGRESS.md"
     } > "$CLAUDE_INPUT"
 
-    # Run Claude and capture output for metrics
+    # Run Claude with JSON output format for metrics capture
     set_status "RUNNING"
     claude_output=$(mktemp)
-    if cat "$CLAUDE_INPUT" | claude --dangerously-skip-permissions 2>&1 | tee "$claude_output"; then
+    claude_json=$(mktemp)
+    if cat "$CLAUDE_INPUT" | claude --dangerously-skip-permissions --print --output-format json > "$claude_json" 2>&1; then
         EXIT_CODE=0
+        # Extract text result for logging
+        jq -r '.result // empty' "$claude_json" 2>/dev/null | tee "$claude_output"
     else
         EXIT_CODE=$?
         warn "Iteration $ITERATION exited with code $EXIT_CODE"
+        # On error, output may still have useful info
+        cat "$claude_json" 2>/dev/null | tee "$claude_output"
     fi
     rm -f "$CLAUDE_INPUT"
 
-    # Update metrics with captured output
-    update_metrics "$(cat "$claude_output")"
-    rm -f "$claude_output"
+    # Update metrics from JSON output
+    update_metrics "$claude_json"
+    rm -f "$claude_output" "$claude_json"
 
     # Check for errors
     if [[ $EXIT_CODE -ne 0 ]] && [[ $EXIT_CODE -ne 130 ]]; then
