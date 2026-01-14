@@ -36,6 +36,12 @@ ralph -p <project> cleanup <workstream>
 
 # Recover orphaned workstreams
 ralph recover
+
+# Prune stale workstream state
+ralph prune [--dry-run]
+
+# View workstream history (tokens, cost, duration)
+ralph history [--all] [project]
 ```
 
 ## Custom Slash Commands
@@ -101,8 +107,8 @@ fi
 ```
 ~/.ralph/
 ├── bin/
-│   ├── ralph              # Main CLI (~1200 lines)
-│   └── ralph-loop.sh      # Iteration engine (~300 lines)
+│   ├── ralph              # Main CLI (~1800 lines)
+│   └── ralph-loop.sh      # Iteration engine (~350 lines)
 ├── config.yaml            # Global config
 ├── projects/              # Project registrations
 │   └── <project>.yaml
@@ -111,14 +117,17 @@ fi
 │       └── <workstream>/
 │           ├── PROMPT.md
 │           └── PROGRESS.md
-└── state/                 # Runtime state
-    └── <project>/
-        └── <workstream>/
-            ├── status
-            ├── iteration
-            ├── pid
-            ├── question
-            └── answer
+├── state/                 # Runtime state
+│   └── <project>/
+│       └── <workstream>/
+│           ├── status
+│           ├── iteration
+│           ├── metrics.json   # Token usage, cost, timing
+│           ├── pid
+│           ├── question
+│           └── answer
+└── archive/               # Historical records
+    └── history.json       # JSONL: all completed workstreams
 ```
 
 ### Core Loop
