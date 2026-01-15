@@ -310,6 +310,118 @@ get_metrics() {
     fi
 }
 
+# Get note for a workstream
+get_note() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local note_file="${state_dir}/note"
+
+    if [[ -f "$note_file" ]]; then
+        cat "$note_file"
+    fi
+}
+
+# Detect issues with a workstream that need attention
+# Returns: issue type and description as "TYPE|description"
+detect_workstream_issues() {
+    local project="$1"
+    local workstream="$2"
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local session
+    session=$(get_session_name "$project" "$workstream")
+
+    local status iteration metrics max_iter
+    status=$(get_status "$project" "$workstream")
+    iteration=$(get_iteration "$project" "$workstream")
+    metrics=$(get_metrics "$project" "$workstream")
+    max_iter=$(echo "$metrics" | jq -r '.max_iterations // 100')
+
+    # Check for various issue conditions
+    case "$status" in
+        NEEDS_INPUT)
+            local question
+            question=$(get_question "$project" "$workstream")
+            echo "NEEDS_INPUT|Waiting for answer: ${question:0:80}"
+            return 0
+            ;;
+        ERROR)
+            echo "ERROR|Claude Code exited with error"
+            return 0
+            ;;
+        STUCK)
+            echo "STUCK|No progress for multiple iterations"
+            return 0
+            ;;
+        COMPLETE)
+            echo "COMPLETE|Ready for cleanup"
+            return 0
+            ;;
+        STOPPED)
+            # Check if stopped at max iterations without completing
+            if [[ $iteration -ge $max_iter ]] && [[ $max_iter -gt 0 ]]; then
+                echo "MAX_ITER|Reached max iterations ($iteration/$max_iter) without completing"
+                return 0
+            fi
+            ;;
+        RUNNING)
+            # Check if tmux session actually exists
+            if ! tmux has-session -t "$session" 2>/dev/null; then
+                echo "ORPHANED|Session crashed - state is stale"
+                return 0
+            fi
+            ;;
+    esac
+
+    # No issues
+    return 1
+}
+
+# Get last meaningful progress from logs or PROGRESS.md
+get_last_progress() {
+    local project="$1"
+    local workstream="$2"
+    local log_dir
+    log_dir=$(get_log_dir "$project" "$workstream")
+    local workstream_dir
+    workstream_dir=$(get_workstream_dir "$project" "$workstream")
+
+    # Try to get last lines from PROGRESS.md
+    local progress_file="${workstream_dir}/PROGRESS.md"
+    if [[ -f "$progress_file" ]]; then
+        # Look for "Current Task" or last completed item
+        local current
+        current=$(grep -A1 "^## Current Task" "$progress_file" 2>/dev/null | tail -1 | sed 's/^- //')
+        if [[ -n "$current" ]] && [[ "$current" != "## Current Task" ]]; then
+            echo "$current"
+            return
+        fi
+
+        # Fall back to last completed item
+        local completed
+        completed=$(grep -A10 "^## Completed" "$progress_file" 2>/dev/null | grep "^- " | tail -1 | sed 's/^- //')
+        if [[ -n "$completed" ]]; then
+            echo "Last: $completed"
+            return
+        fi
+    fi
+
+    # Fall back to log file
+    if [[ -d "$log_dir" ]]; then
+        local latest_log
+        latest_log=$(ls -t "$log_dir"/*.log 2>/dev/null | head -1)
+        if [[ -n "$latest_log" ]]; then
+            # Get last meaningful line (skip Ralph prefix lines)
+            tail -20 "$latest_log" 2>/dev/null | grep -v "^\[Ralph\]" | grep -v "^===" | tail -1
+            return
+        fi
+    fi
+
+    echo ""
+}
+
 # Format token count for display
 format_tokens() {
     local count=$1
@@ -1187,6 +1299,104 @@ cmd_logs() {
     fi
 }
 
+cmd_note() {
+    local project="$1"
+    local workstream="$2"
+    shift 2
+    local note_text="$*"
+
+    if [[ -z "$project" ]] || [[ -z "$workstream" ]]; then
+        error "Project and workstream required"
+        echo "Usage: ralph -p <project> note <workstream> \"note text\""
+        echo "       ralph -p <project> note <workstream> --clear"
+        return 1
+    fi
+
+    local state_dir
+    state_dir=$(get_state_dir "$project" "$workstream")
+    local note_file="${state_dir}/note"
+
+    if [[ ! -d "$state_dir" ]]; then
+        error "Workstream not found: ${project}/${workstream}"
+        return 1
+    fi
+
+    if [[ "$note_text" == "--clear" ]] || [[ "$note_text" == "-c" ]]; then
+        rm -f "$note_file"
+        echo -e "${GREEN}Note cleared for ${project}/${workstream}${NC}"
+        return
+    fi
+
+    if [[ -z "$note_text" ]]; then
+        # Show current note
+        if [[ -f "$note_file" ]]; then
+            echo -e "${BOLD}Note for ${project}/${workstream}:${NC}"
+            cat "$note_file"
+        else
+            echo "No note set for ${project}/${workstream}"
+        fi
+        return
+    fi
+
+    # Set the note
+    echo "$note_text" > "$note_file"
+    echo -e "${GREEN}Note set for ${project}/${workstream}${NC}"
+}
+
+cmd_notes() {
+    local project="$1"
+
+    if [[ -z "$project" ]]; then
+        # Show all notes across all projects
+        echo ""
+        echo -e "${BOLD}Workstream Notes${NC}"
+        echo "================"
+        echo ""
+
+        local has_notes=false
+        for project_file in "$RALPH_HOME/projects/"*.yaml; do
+            [[ -f "$project_file" ]] || continue
+            local proj
+            proj=$(basename "$project_file" .yaml)
+
+            for ws in $(get_workstreams "$proj"); do
+                local note
+                note=$(get_note "$proj" "$ws")
+                if [[ -n "$note" ]]; then
+                    has_notes=true
+                    echo -e "  ${CYAN}${proj}/${ws}${NC}: $note"
+                fi
+            done
+        done
+
+        if ! $has_notes; then
+            echo "  No notes set"
+        fi
+        echo ""
+    else
+        # Show notes for specific project
+        echo ""
+        echo -e "${BOLD}Notes for $project${NC}"
+        echo "================"
+        echo ""
+
+        local has_notes=false
+        for ws in $(get_workstreams "$project"); do
+            local note
+            note=$(get_note "$project" "$ws")
+            if [[ -n "$note" ]]; then
+                has_notes=true
+                echo -e "  ${CYAN}${ws}${NC}: $note"
+            fi
+        done
+
+        if ! $has_notes; then
+            echo "  No notes set"
+        fi
+        echo ""
+    fi
+}
+
 #═══════════════════════════════════════════════════════════════
 # Recovery
 #═══════════════════════════════════════════════════════════════
@@ -1432,6 +1642,905 @@ cmd_history() {
         fi
     fi
     echo ""
+}
+
+#═══════════════════════════════════════════════════════════════
+# Global Status (Non-Interactive)
+#═══════════════════════════════════════════════════════════════
+
+cmd_status_global() {
+    echo ""
+    echo -e "${BOLD}Ralph Status${NC}"
+    echo "═══════════════════════════════════════════════════════════════════════════════"
+    echo ""
+
+    # Collect all workstreams across all projects
+    local has_active=false
+    local all_rows=()
+    local attention_items=()
+    local notes_items=()
+
+    for project_file in "$RALPH_HOME/projects/"*.yaml; do
+        [[ -f "$project_file" ]] || continue
+
+        local project
+        project=$(basename "$project_file" .yaml)
+        local workstreams_str
+        workstreams_str=$(get_workstreams "$project")
+
+        if [[ -n "$workstreams_str" ]]; then
+            for ws in $workstreams_str; do
+                has_active=true
+                all_rows+=("$project|$ws")
+
+                # Check for issues
+                local issue
+                if issue=$(detect_workstream_issues "$project" "$ws"); then
+                    local issue_type issue_desc last_progress
+                    issue_type=$(echo "$issue" | cut -d'|' -f1)
+                    issue_desc=$(echo "$issue" | cut -d'|' -f2-)
+                    last_progress=$(get_last_progress "$project" "$ws")
+                    attention_items+=("$project|$ws|$issue_type|$issue_desc|$last_progress")
+                fi
+
+                # Check for notes
+                local note
+                note=$(get_note "$project" "$ws")
+                if [[ -n "$note" ]]; then
+                    notes_items+=("$project|$ws|$note")
+                fi
+            done
+        fi
+    done
+
+    if ! $has_active; then
+        echo "No active workstreams"
+        echo ""
+        echo "Start one with: ralph -p <project> start <workstream>"
+        return
+    fi
+
+    # Table header with Notes column
+    printf "┌─────────────────┬─────────────────┬──────────┬────────────┬──────────┬─────────┬──────────┬───────┐\n"
+    printf "│ %-15s │ %-15s │ %-8s │ %-10s │ %-8s │ %-7s │ %-8s │ %-5s │\n" \
+           "Project" "Workstream" "Status" "Progress" "Tokens" "Cost" "Duration" "Notes"
+    printf "├─────────────────┼─────────────────┼──────────┼────────────┼──────────┼─────────┼──────────┼───────┤\n"
+
+    for row in "${all_rows[@]}"; do
+        local project ws
+        project=$(echo "$row" | cut -d'|' -f1)
+        ws=$(echo "$row" | cut -d'|' -f2)
+
+        local status iteration metrics
+        status=$(get_status "$project" "$ws")
+        iteration=$(get_iteration "$project" "$ws")
+        metrics=$(get_metrics "$project" "$ws")
+
+        local max_iter tokens_in tokens_out total_tokens cost start_time end_time
+        max_iter=$(echo "$metrics" | jq -r '.max_iterations // 100')
+        tokens_in=$(echo "$metrics" | jq -r '.tokens_in // 0')
+        tokens_out=$(echo "$metrics" | jq -r '.tokens_out // 0')
+        total_tokens=$((tokens_in + tokens_out))
+        cost=$(echo "$metrics" | jq -r '.total_cost // 0')
+        start_time=$(echo "$metrics" | jq -r '.start_time // ""')
+        end_time=$(echo "$metrics" | jq -r '.end_time // ""')
+
+        local progress_pct=0
+        [[ $max_iter -gt 0 ]] && progress_pct=$((iteration * 100 / max_iter))
+
+        local tokens_fmt cost_fmt duration_fmt progress_fmt
+        tokens_fmt=$(format_tokens "$total_tokens")
+        cost_fmt=$(printf "\$%.2f" "$cost")
+
+        # Use end_time for stopped/complete workstreams, now for running
+        if [[ "$status" == "RUNNING" ]] || [[ -z "$end_time" ]] || [[ "$end_time" == "null" ]]; then
+            duration_fmt=$(format_duration "$start_time")
+        else
+            duration_fmt=$(format_duration_between "$start_time" "$end_time")
+        fi
+
+        # Progress display: DONE for complete, percentage otherwise
+        if [[ "$status" == "COMPLETE" ]]; then
+            progress_fmt="  DONE    "
+        else
+            progress_fmt=$(printf "%2d/%-3d %2d%%" "$iteration" "$max_iter" "$progress_pct")
+        fi
+
+        # Truncate names to 15 chars
+        local proj_short="${project:0:15}"
+        local ws_short="${ws:0:15}"
+
+        # Note indicator
+        local note_indicator="     "
+        local note
+        note=$(get_note "$project" "$ws")
+        if [[ -n "$note" ]]; then
+            note_indicator="  📝 "
+        fi
+
+        # Status with color
+        local status_display
+        case "$status" in
+            RUNNING)     status_display="${GREEN}RUNNING${NC}" ;;
+            COMPLETE)    status_display="${GREEN}COMPLETE${NC}" ;;
+            STOPPED)     status_display="${DIM}STOPPED${NC}" ;;
+            NEEDS_INPUT) status_display="${YELLOW}NEEDS_IN${NC}" ;;
+            STUCK)       status_display="${RED}STUCK${NC}" ;;
+            ERROR)       status_display="${RED}ERROR${NC}" ;;
+            *)           status_display="$status" ;;
+        esac
+
+        echo -e "│ $(printf '%-15s' "$proj_short") │ $(printf '%-15s' "$ws_short") │ ${status_display}$(printf '%*s' $((8 - ${#status})) '') │ $(printf '%-10s' "$progress_fmt") │ $(printf '%-8s' "$tokens_fmt") │ $(printf '%-7s' "$cost_fmt") │ $(printf '%-8s' "$duration_fmt") │${note_indicator}│"
+    done
+
+    printf "└─────────────────┴─────────────────┴──────────┴────────────┴──────────┴─────────┴──────────┴───────┘\n"
+
+    # Needs Attention section
+    if [[ ${#attention_items[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${YELLOW}⚠️  Needs Attention${NC}"
+        echo "───────────────────"
+
+        for item in "${attention_items[@]}"; do
+            local proj ws issue_type issue_desc last_progress
+            proj=$(echo "$item" | cut -d'|' -f1)
+            ws=$(echo "$item" | cut -d'|' -f2)
+            issue_type=$(echo "$item" | cut -d'|' -f3)
+            issue_desc=$(echo "$item" | cut -d'|' -f4)
+            last_progress=$(echo "$item" | cut -d'|' -f5)
+
+            # Issue icon
+            local icon
+            case "$issue_type" in
+                NEEDS_INPUT) icon="${YELLOW}❓${NC}" ;;
+                ERROR)       icon="${RED}✗${NC}" ;;
+                STUCK)       icon="${RED}⏸${NC}" ;;
+                COMPLETE)    icon="${GREEN}✓${NC}" ;;
+                MAX_ITER)    icon="${YELLOW}🔄${NC}" ;;
+                ORPHANED)    icon="${RED}💀${NC}" ;;
+                *)           icon="•" ;;
+            esac
+
+            echo -e "  $icon ${CYAN}${proj}/${ws}${NC} - $issue_desc"
+
+            # Show last progress if available
+            if [[ -n "$last_progress" ]]; then
+                echo -e "     └─ ${DIM}$last_progress${NC}"
+            fi
+
+            # Suggest action
+            local action=""
+            case "$issue_type" in
+                NEEDS_INPUT) action="ralph -p $proj answer $ws" ;;
+                ERROR)       action="ralph -p $proj logs $ws" ;;
+                COMPLETE)    action="ralph -p $proj cleanup $ws" ;;
+                MAX_ITER)    action="ralph -p $proj cleanup $ws  # or restart with more iterations" ;;
+                ORPHANED)    action="ralph recover" ;;
+            esac
+            if [[ -n "$action" ]]; then
+                echo -e "     └─ ${DIM}Action: ${action}${NC}"
+            fi
+        done
+    fi
+
+    # Notes section
+    if [[ ${#notes_items[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${CYAN}📝 Workstream Notes${NC}"
+        echo "───────────────────"
+
+        for item in "${notes_items[@]}"; do
+            local proj ws note
+            proj=$(echo "$item" | cut -d'|' -f1)
+            ws=$(echo "$item" | cut -d'|' -f2)
+            note=$(echo "$item" | cut -d'|' -f3-)
+
+            echo -e "  • ${BOLD}${proj}/${ws}${NC}: $note"
+        done
+    fi
+
+    echo ""
+    echo -e "${DIM}Quick commands: ralph -p <project> [attach|stop|cleanup|answer|logs] <workstream>${NC}"
+    echo ""
+}
+
+#═══════════════════════════════════════════════════════════════
+# Live Progress Streaming (ralph watch)
+#═══════════════════════════════════════════════════════════════
+
+EVENTS_DIR="$RALPH_HOME/events"
+EVENTS_FILE="$EVENTS_DIR/stream"
+
+# Format a single event for human-readable output
+format_event() {
+    local line="$1"
+
+    # Parse JSON fields
+    local ts project ws event
+    ts=$(echo "$line" | jq -r '.ts // ""' 2>/dev/null)
+    project=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+    ws=$(echo "$line" | jq -r '.ws // ""' 2>/dev/null)
+    event=$(echo "$line" | jq -r '.event // ""' 2>/dev/null)
+
+    [[ -z "$project" ]] || [[ -z "$ws" ]] && return
+
+    # Format timestamp (just HH:MM:SS)
+    local time_fmt
+    time_fmt=$(echo "$ts" | sed 's/.*T\([0-9:]*\)Z/\1/')
+
+    # Format based on event type
+    case "$event" in
+        iteration_start)
+            local iter max
+            iter=$(echo "$line" | jq -r '.iter // 0')
+            max=$(echo "$line" | jq -r '.max // 20')
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${GREEN}▶${NC} Starting iteration ${BOLD}${iter}/${max}${NC}"
+            ;;
+        iteration_end)
+            local iter exit_code cost tokens_in tokens_out
+            iter=$(echo "$line" | jq -r '.iter // 0')
+            exit_code=$(echo "$line" | jq -r '.exit_code // 0')
+            cost=$(echo "$line" | jq -r '.cost // 0')
+            tokens_in=$(echo "$line" | jq -r '.tokens_in // 0')
+            tokens_out=$(echo "$line" | jq -r '.tokens_out // 0')
+            local total_tokens=$((tokens_in + tokens_out))
+            local tokens_fmt
+            if [[ $total_tokens -ge 1000000 ]]; then
+                tokens_fmt="$(awk "BEGIN {printf \"%.1fM\", $total_tokens/1000000}")"
+            elif [[ $total_tokens -ge 1000 ]]; then
+                tokens_fmt="$(awk "BEGIN {printf \"%.0fK\", $total_tokens/1000}")"
+            else
+                tokens_fmt="${total_tokens}"
+            fi
+            local status_icon
+            if [[ $exit_code -eq 0 ]]; then
+                status_icon="${GREEN}✓${NC}"
+            else
+                status_icon="${RED}✗${NC}"
+            fi
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${status_icon} Iter ${iter} done │ \$$(printf '%.2f' "$cost") │ ${tokens_fmt} tokens"
+            ;;
+        status)
+            local status msg
+            status=$(echo "$line" | jq -r '.status // ""')
+            msg=$(echo "$line" | jq -r '.msg // ""')
+            local status_color
+            case "$status" in
+                RUNNING)  status_color="${GREEN}" ;;
+                COMPLETE) status_color="${GREEN}" ;;
+                ERROR)    status_color="${RED}" ;;
+                STOPPED)  status_color="${DIM}" ;;
+                *)        status_color="${NC}" ;;
+            esac
+            if [[ -n "$msg" ]]; then
+                echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${status_color}${status}${NC}: $msg"
+            else
+                echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${status_color}${status}${NC}"
+            fi
+            ;;
+        needs_input)
+            local question
+            question=$(echo "$line" | jq -r '.question // ""')
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${YELLOW}⚠ NEEDS_INPUT${NC}: ${question:0:60}"
+            ;;
+        progress)
+            local msg
+            msg=$(echo "$line" | jq -r '.msg // ""')
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${DIM}→${NC} $msg"
+            ;;
+        complete)
+            local status
+            status=$(echo "$line" | jq -r '.status // "COMPLETE"')
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} ${GREEN}★ ${status}${NC}"
+            ;;
+        *)
+            echo -e "${DIM}${time_fmt}${NC} ${CYAN}${project}/${ws}${NC} $event"
+            ;;
+    esac
+}
+
+# Watch command - live stream of workstream events
+cmd_watch() {
+    local filter_project=""
+    local json_mode=false
+    local follow=true
+    local args_done=false
+
+    # Parse flags
+    for arg in "$@"; do
+        case "$arg" in
+            --json)
+                json_mode=true
+                ;;
+            --no-follow|-n)
+                follow=false
+                ;;
+            -*)
+                # Unknown flag, skip
+                ;;
+            *)
+                if [[ -z "$filter_project" ]]; then
+                    filter_project="$arg"
+                fi
+                ;;
+        esac
+    done
+
+    # Ensure events directory exists
+    mkdir -p "$EVENTS_DIR"
+
+    # JSON mode - just stream events
+    if $json_mode; then
+        if $follow; then
+            if [[ -f "$EVENTS_FILE" ]]; then
+                tail -f "$EVENTS_FILE" | while read -r line; do
+                    if [[ -n "$filter_project" ]]; then
+                        local proj
+                        proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+                        [[ "$proj" != "$filter_project" ]] && continue
+                    fi
+                    echo "$line"
+                done
+            else
+                echo "No events file found. Start a workstream first."
+                return 1
+            fi
+        else
+            if [[ -f "$EVENTS_FILE" ]]; then
+                while read -r line; do
+                    if [[ -n "$filter_project" ]]; then
+                        local proj
+                        proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+                        [[ "$proj" != "$filter_project" ]] && continue
+                    fi
+                    echo "$line"
+                done < "$EVENTS_FILE"
+            fi
+        fi
+        return 0
+    fi
+
+    # Human-readable mode
+    echo -e "${BOLD}Ralph Watch${NC} - Live Progress"
+    if [[ -n "$filter_project" ]]; then
+        echo -e "${DIM}Filtering to project: $filter_project${NC}"
+    fi
+    if $follow; then
+        echo -e "${DIM}Press Ctrl+C to exit${NC}"
+    fi
+    echo ""
+
+    if ! $follow; then
+        # One-shot mode: show recent events
+        if [[ -f "$EVENTS_FILE" ]]; then
+            local count=0
+            while read -r line; do
+                if [[ -n "$filter_project" ]]; then
+                    local proj
+                    proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+                    [[ "$proj" != "$filter_project" ]] && continue
+                fi
+                format_event "$line"
+                count=$((count + 1))
+            done < "$EVENTS_FILE"
+
+            if [[ $count -eq 0 ]]; then
+                echo "No events found."
+            fi
+        else
+            echo "No events yet. Start a workstream to see progress."
+        fi
+        return 0
+    fi
+
+    # Follow mode: show existing events then tail
+    if [[ ! -f "$EVENTS_FILE" ]]; then
+        echo "No events yet. Waiting for workstream activity..."
+        touch "$EVENTS_FILE"
+    else
+        # Show last 20 events to provide context
+        local recent_events
+        recent_events=$(tail -20 "$EVENTS_FILE")
+        if [[ -n "$recent_events" ]]; then
+            echo -e "${DIM}── Recent activity ──${NC}"
+            while read -r line; do
+                if [[ -n "$filter_project" ]]; then
+                    local proj
+                    proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+                    [[ "$proj" != "$filter_project" ]] && continue
+                fi
+                format_event "$line"
+            done <<< "$recent_events"
+            echo -e "${DIM}── Live feed ──${NC}"
+            echo ""
+        fi
+    fi
+
+    # Now tail for new events
+    tail -f "$EVENTS_FILE" 2>/dev/null | while read -r line; do
+        if [[ -n "$filter_project" ]]; then
+            local proj
+            proj=$(echo "$line" | jq -r '.project // ""' 2>/dev/null)
+            [[ "$proj" != "$filter_project" ]] && continue
+        fi
+        format_event "$line"
+    done
+}
+
+#═══════════════════════════════════════════════════════════════
+# Workflow Dependencies & Orchestration (ralph run)
+#═══════════════════════════════════════════════════════════════
+
+WORKFLOWS_DIR="$RALPH_HOME/workflows"
+
+# Parse a YAML workflow file and extract workstream definitions
+# Returns JSON array of workstreams with name, prompt, iterations, depends_on
+parse_workflow() {
+    local workflow_file="$1"
+
+    if [[ ! -f "$workflow_file" ]]; then
+        error "Workflow file not found: $workflow_file"
+        return 1
+    fi
+
+    # Use yq if available, otherwise fall back to simple parsing
+    if command -v yq &>/dev/null; then
+        yq -o=json "$workflow_file"
+    else
+        # Simple YAML parser for workflow format (limited but functional)
+        local name="" prompt="" iterations=20 depends_on="[]"
+        local in_workstreams=false
+        local workstreams_json="["
+        local first=true
+
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip comments and empty lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// /}" ]] && continue
+
+            if [[ "$line" =~ ^workstreams: ]]; then
+                in_workstreams=true
+                continue
+            fi
+
+            if $in_workstreams; then
+                # New workstream entry
+                if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name:[[:space:]]*(.+) ]]; then
+                    # Save previous workstream if exists
+                    if [[ -n "$name" ]]; then
+                        $first || workstreams_json+=","
+                        first=false
+                        workstreams_json+=$(printf '{"name":"%s","prompt":"%s","iterations":%d,"depends_on":%s}' \
+                            "$name" "${prompt//\"/\\\"}" "$iterations" "$depends_on")
+                    fi
+                    name="${BASH_REMATCH[1]}"
+                    prompt=""
+                    iterations=20
+                    depends_on="[]"
+                elif [[ "$line" =~ ^[[:space:]]+prompt:[[:space:]]*[\"\']*(.+)[\"\']*$ ]]; then
+                    prompt="${BASH_REMATCH[1]}"
+                    prompt="${prompt%\"}"
+                    prompt="${prompt%\'}"
+                elif [[ "$line" =~ ^[[:space:]]+iterations:[[:space:]]*([0-9]+) ]]; then
+                    iterations="${BASH_REMATCH[1]}"
+                elif [[ "$line" =~ ^[[:space:]]+depends_on:[[:space:]]*\[(.+)\] ]]; then
+                    # Parse array like [auth, database]
+                    local deps="${BASH_REMATCH[1]}"
+                    deps_json="["
+                    local deps_first=true
+                    for dep in $(echo "$deps" | tr ',' ' '); do
+                        dep=$(echo "$dep" | tr -d ' "'"'"'')
+                        [[ -z "$dep" ]] && continue
+                        $deps_first || deps_json+=","
+                        deps_first=false
+                        deps_json+="\"$dep\""
+                    done
+                    deps_json+="]"
+                    depends_on="$deps_json"
+                fi
+            fi
+        done < "$workflow_file"
+
+        # Save last workstream
+        if [[ -n "$name" ]]; then
+            $first || workstreams_json+=","
+            workstreams_json+=$(printf '{"name":"%s","prompt":"%s","iterations":%d,"depends_on":%s}' \
+                "$name" "${prompt//\"/\\\"}" "$iterations" "$depends_on")
+        fi
+
+        workstreams_json+="]"
+        echo "{\"workstreams\":$workstreams_json}"
+    fi
+}
+
+# Detect cycles in the dependency graph
+# Returns 0 if no cycles, 1 if cycles detected
+detect_cycles() {
+    local workflow_json="$1"
+    local workstreams
+    workstreams=$(echo "$workflow_json" | jq -r '.workstreams[]?.name // empty' 2>/dev/null)
+
+    # Build adjacency list and check for cycles using DFS
+    local -a visiting=()
+    local -a visited=()
+
+    for ws in $workstreams; do
+        local deps
+        deps=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .depends_on[]? // empty" 2>/dev/null)
+        for dep in $deps; do
+            # Check if dependency exists
+            if ! echo "$workstreams" | grep -q "^${dep}$"; then
+                error "Unknown dependency '$dep' in workstream '$ws'"
+                return 1
+            fi
+        done
+    done
+
+    # Simple cycle detection: check if any workstream depends on itself transitively
+    for ws in $workstreams; do
+        if has_cycle "$workflow_json" "$ws" "$ws" ""; then
+            error "Cycle detected involving workstream '$ws'"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# Check for cycles starting from a workstream
+has_cycle() {
+    local workflow_json="$1"
+    local start="$2"
+    local current="$3"
+    local path="$4"
+
+    # Prevent infinite recursion
+    if [[ "${#path}" -gt 1000 ]]; then
+        return 1
+    fi
+
+    local deps
+    deps=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$current\") | .depends_on[]? // empty" 2>/dev/null)
+
+    for dep in $deps; do
+        if [[ "$dep" == "$start" ]] && [[ -n "$path" ]]; then
+            return 0  # Cycle found
+        fi
+        if has_cycle "$workflow_json" "$start" "$dep" "${path}>${dep}"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Get workstreams with no dependencies (can start immediately)
+get_ready_workstreams() {
+    local workflow_json="$1"
+    local completed="$2"  # Space-separated list of completed workstreams
+
+    echo "$workflow_json" | jq -r --arg completed "$completed" '
+        .workstreams[] |
+        select(
+            (.depends_on | length == 0) or
+            (.depends_on | all(. as $dep | ($completed | split(" ") | index($dep))))
+        ) |
+        .name
+    ' 2>/dev/null
+}
+
+# List available workflows
+cmd_workflows() {
+    echo ""
+    echo -e "${BOLD}Available Workflows${NC}"
+    echo ""
+
+    mkdir -p "$WORKFLOWS_DIR"
+
+    local found=false
+    for workflow_file in "$WORKFLOWS_DIR"/*.yaml "$WORKFLOWS_DIR"/*.yml; do
+        [[ -f "$workflow_file" ]] || continue
+        found=true
+
+        local name
+        name=$(basename "$workflow_file" | sed 's/\.\(yaml\|yml\)$//')
+
+        # Try to get workflow name from file
+        local workflow_name
+        workflow_name=$(grep "^name:" "$workflow_file" 2>/dev/null | head -1 | cut -d: -f2 | tr -d ' "'"'"'')
+        [[ -z "$workflow_name" ]] && workflow_name="$name"
+
+        # Count workstreams
+        local ws_count
+        ws_count=$(grep -c "^[[:space:]]*-[[:space:]]*name:" "$workflow_file" 2>/dev/null || echo "0")
+
+        echo -e "  ${CYAN}$name${NC} - $workflow_name (${ws_count} workstreams)"
+    done
+
+    if ! $found; then
+        echo "  No workflows defined yet."
+        echo ""
+        echo "  Create one at: $WORKFLOWS_DIR/<name>.yaml"
+        echo ""
+        echo "  Example workflow:"
+        echo "    name: my-feature"
+        echo "    workstreams:"
+        echo "      - name: auth"
+        echo "        prompt: \"Implement user authentication\""
+        echo "        iterations: 15"
+        echo "      - name: api"
+        echo "        prompt: \"Create API endpoints\""
+        echo "        iterations: 20"
+        echo "        depends_on: [auth]"
+    fi
+    echo ""
+}
+
+# Run a workflow with dependency resolution
+cmd_run_workflow() {
+    local workflow_arg="$1"
+    local dry_run=false
+
+    # Parse flags
+    shift || true
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run|-n)
+                dry_run=true
+                ;;
+        esac
+    done
+
+    if [[ -z "$workflow_arg" ]]; then
+        error "Usage: ralph run <workflow.yaml> [--dry-run]"
+        return 1
+    fi
+
+    # Resolve workflow file
+    local workflow_file="$workflow_arg"
+    if [[ ! -f "$workflow_file" ]]; then
+        workflow_file="$WORKFLOWS_DIR/$workflow_arg"
+    fi
+    if [[ ! -f "$workflow_file" ]] && [[ ! -f "${workflow_file}.yaml" ]]; then
+        workflow_file="${WORKFLOWS_DIR}/${workflow_arg}.yaml"
+    fi
+    if [[ ! -f "$workflow_file" ]]; then
+        error "Workflow not found: $workflow_arg"
+        echo "  Tried:"
+        echo "    - $workflow_arg"
+        echo "    - $WORKFLOWS_DIR/$workflow_arg"
+        echo "    - ${WORKFLOWS_DIR}/${workflow_arg}.yaml"
+        return 1
+    fi
+
+    # Parse workflow
+    local workflow_json
+    workflow_json=$(parse_workflow "$workflow_file")
+    if [[ -z "$workflow_json" ]]; then
+        error "Failed to parse workflow"
+        return 1
+    fi
+
+    # Get workflow name
+    local workflow_name
+    workflow_name=$(echo "$workflow_json" | jq -r '.name // "workflow"' 2>/dev/null)
+
+    # Check for cycles
+    if ! detect_cycles "$workflow_json"; then
+        return 1
+    fi
+
+    # Get workstream list
+    local all_workstreams
+    all_workstreams=$(echo "$workflow_json" | jq -r '.workstreams[].name' 2>/dev/null)
+    local ws_count
+    ws_count=$(echo "$all_workstreams" | wc -l | tr -d ' ')
+
+    echo ""
+    echo -e "${BOLD}Workflow: ${CYAN}$workflow_name${NC}"
+    echo "──────────────────────────────────────────"
+    echo ""
+
+    # Show execution plan
+    echo -e "${CYAN}Execution Plan:${NC}"
+
+    # Group workstreams by dependency level
+    local level=0
+    local remaining="$all_workstreams"
+    local completed=""
+
+    while [[ -n "$remaining" ]]; do
+        local ready
+        ready=$(get_ready_workstreams "$workflow_json" "$completed")
+        ready=$(echo "$ready" | grep -v '^$' || true)
+
+        if [[ -z "$ready" ]]; then
+            break
+        fi
+
+        echo ""
+        if [[ $level -eq 0 ]]; then
+            echo -e "  ${GREEN}▶ Start immediately (parallel):${NC}"
+        else
+            echo -e "  ${YELLOW}▶ After level $((level)) completes:${NC}"
+        fi
+
+        for ws in $ready; do
+            # Skip if not in remaining
+            echo "$remaining" | grep -q "^${ws}$" || continue
+
+            local iterations prompt deps
+            iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations" 2>/dev/null)
+            prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt" 2>/dev/null)
+            deps=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .depends_on | join(\", \")" 2>/dev/null)
+
+            echo -e "    ${BOLD}$ws${NC} (${iterations} iterations)"
+            if [[ -n "$deps" ]] && [[ "$deps" != "null" ]]; then
+                echo -e "      ${DIM}depends on: $deps${NC}"
+            fi
+            echo -e "      ${DIM}\"${prompt:0:50}...\"${NC}"
+
+            # Mark as "completed" for next round
+            completed="$completed $ws"
+
+            # Remove from remaining
+            remaining=$(echo "$remaining" | grep -v "^${ws}$")
+        done
+
+        level=$((level + 1))
+
+        # Safety check
+        [[ $level -gt 50 ]] && break
+    done
+
+    echo ""
+
+    if $dry_run; then
+        echo -e "${DIM}Dry run - no workstreams started${NC}"
+        return 0
+    fi
+
+    # Get project (must be specified or detected)
+    local project="${PROJECT:-$(detect_project)}"
+    if [[ -z "$project" ]]; then
+        error "No project specified. Use -p <project> or run from a project directory."
+        return 1
+    fi
+
+    if ! project_exists "$project"; then
+        error "Project not found: $project"
+        return 1
+    fi
+
+    echo -e "${BOLD}Starting workflow execution...${NC}"
+    echo ""
+
+    # Track running and completed workstreams
+    local running=""
+    local completed=""
+    local failed=""
+
+    # Start workstreams with no dependencies
+    local ready
+    ready=$(get_ready_workstreams "$workflow_json" "$completed")
+
+    for ws in $ready; do
+        local iterations prompt
+        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations" 2>/dev/null)
+        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt" 2>/dev/null)
+
+        echo -e "${GREEN}▶${NC} Starting ${CYAN}$ws${NC}..."
+
+        # Create PROMPT.md for this workstream
+        local ws_dir="$RALPH_HOME/workstreams/$project/$ws"
+        mkdir -p "$ws_dir"
+        echo "$prompt" > "$ws_dir/PROMPT.md"
+
+        # Start the workstream
+        cmd_start "$project" "$ws" "$iterations"
+        running="$running $ws"
+    done
+
+    # Monitor and start dependent workstreams as deps complete
+    echo ""
+    echo -e "${DIM}Monitoring workstream progress...${NC}"
+    echo -e "${DIM}Use 'ralph watch' in another terminal for live progress${NC}"
+    echo ""
+
+    local all_done=false
+    local check_count=0
+    local max_checks=3600  # 1 hour at 1 check/sec
+
+    while ! $all_done && [[ $check_count -lt $max_checks ]]; do
+        sleep 2
+        check_count=$((check_count + 1))
+
+        # Check status of running workstreams
+        local still_running=""
+        for ws in $running; do
+            ws=$(echo "$ws" | tr -d ' ')
+            [[ -z "$ws" ]] && continue
+
+            local status
+            status=$(get_status "$project" "$ws")
+
+            case "$status" in
+                COMPLETE|MERGED)
+                    completed="$completed $ws"
+                    echo -e "${GREEN}✓${NC} ${CYAN}$ws${NC} completed"
+
+                    # Check if any new workstreams can start
+                    local newly_ready
+                    newly_ready=$(get_ready_workstreams "$workflow_json" "$completed")
+
+                    for new_ws in $newly_ready; do
+                        # Skip if already started
+                        echo "$completed $running" | grep -q "$new_ws" && continue
+
+                        local iterations prompt
+                        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .iterations" 2>/dev/null)
+                        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .prompt" 2>/dev/null)
+
+                        echo -e "${GREEN}▶${NC} Starting ${CYAN}$new_ws${NC} (deps satisfied)..."
+
+                        local ws_dir="$RALPH_HOME/workstreams/$project/$new_ws"
+                        mkdir -p "$ws_dir"
+                        echo "$prompt" > "$ws_dir/PROMPT.md"
+
+                        cmd_start "$project" "$new_ws" "$iterations"
+                        still_running="$still_running $new_ws"
+                    done
+                    ;;
+                ERROR|STUCK)
+                    failed="$failed $ws"
+                    echo -e "${RED}✗${NC} ${CYAN}$ws${NC} failed (status: $status)"
+                    ;;
+                NEEDS_INPUT)
+                    still_running="$still_running $ws"
+                    echo -e "${YELLOW}⚠${NC} ${CYAN}$ws${NC} needs input - use 'ralph -p $project answer $ws'"
+                    ;;
+                RUNNING|*)
+                    still_running="$still_running $ws"
+                    ;;
+            esac
+        done
+
+        running="$still_running"
+
+        # Check if all done
+        local completed_count
+        completed_count=$(echo "$completed" | wc -w | tr -d ' ')
+
+        if [[ $completed_count -ge $ws_count ]]; then
+            all_done=true
+        fi
+
+        # No more running and not all done = some failed or stuck
+        if [[ -z "$(echo "$running" | tr -d ' ')" ]] && ! $all_done; then
+            echo -e "${YELLOW}Warning: No running workstreams but workflow not complete${NC}"
+            break
+        fi
+    done
+
+    echo ""
+    echo "──────────────────────────────────────────"
+    echo -e "${BOLD}Workflow Summary${NC}"
+    echo ""
+    local completed_count failed_count
+    completed_count=$(echo "$completed" | wc -w | tr -d ' ')
+    failed_count=$(echo "$failed" | wc -w | tr -d ' ')
+
+    echo -e "  Completed: ${GREEN}$completed_count${NC}/$ws_count"
+    if [[ $failed_count -gt 0 ]]; then
+        echo -e "  Failed: ${RED}$failed_count${NC}"
+    fi
+    echo ""
+
+    if [[ $completed_count -eq $ws_count ]]; then
+        echo -e "${GREEN}✓ Workflow completed successfully!${NC}"
+    else
+        echo -e "${YELLOW}⚠ Workflow did not complete. Check workstream status with 'ralph status'${NC}"
+    fi
 }
 
 #═══════════════════════════════════════════════════════════════
@@ -1846,6 +2955,11 @@ cmd_help() {
     echo ""
     echo -e "${BOLD}ralph${NC} v${RALPH_VERSION} - Autonomous AI development orchestrator"
     echo ""
+    echo -e "${CYAN}Quick View:${NC}"
+    echo "  ralph                             Show status + diagnostics + notes"
+    echo "  ralph status                      Same as above"
+    echo "  ralph dashboard                   Interactive menu mode"
+    echo ""
     echo -e "${CYAN}Project Management:${NC}"
     echo "  ralph projects                    List registered projects"
     echo "  ralph projects add                Register current directory"
@@ -1854,24 +2968,34 @@ cmd_help() {
     echo "  ralph projects update <name>      Re-detect repos"
     echo ""
     echo -e "${CYAN}Workstream Operations:${NC}"
-    echo "  ralph -p <project> start <ws>     Start workstream"
-    echo "  ralph -p <project> stop <ws>      Stop workstream"
-    echo "  ralph -p <project> status         List workstreams"
-    echo "  ralph -p <project> attach <ws>    Watch live (Ctrl-b d to detach)"
-    echo "  ralph -p <project> answer [ws]    Answer pending question"
-    echo "  ralph -p <project> cleanup <ws>   Merge and remove worktree"
-    echo "  ralph -p <project> logs <ws>      Tail log file"
+    echo "  ralph -p <proj> start <ws> [n]    Start workstream (n iterations)"
+    echo "  ralph -p <proj> stop <ws>         Stop workstream"
+    echo "  ralph -p <proj> attach <ws>       Watch live (Ctrl-b d to detach)"
+    echo "  ralph -p <proj> answer [ws]       Answer pending question"
+    echo "  ralph -p <proj> cleanup <ws>      Merge and remove worktree"
+    echo "  ralph -p <proj> logs <ws>         Tail log file"
     echo ""
-    echo -e "${CYAN}Auto-detect Project:${NC}"
-    echo "  ralph start <ws>                  Start (detect project from cwd)"
-    echo "  ralph status                      Status (detect project from cwd)"
+    echo -e "${CYAN}Workstream Notes:${NC}"
+    echo "  ralph -p <proj> note <ws> \"text\"  Add note to workstream"
+    echo "  ralph -p <proj> note <ws>         Show note"
+    echo "  ralph -p <proj> note <ws> --clear Clear note"
+    echo "  ralph notes                       List all notes"
     echo ""
-    echo -e "${CYAN}Global:${NC}"
-    echo "  ralph                             Interactive dashboard"
+    echo -e "${CYAN}Live Progress:${NC}"
+    echo "  ralph watch                       Live progress from all workstreams"
+    echo "  ralph watch <project>             Filter to one project"
+    echo "  ralph watch --json                Raw JSONL stream (for piping)"
+    echo "  ralph watch -n                    One-shot mode (no follow)"
+    echo ""
+    echo -e "${CYAN}Workflows (DAG Orchestration):${NC}"
+    echo "  ralph workflows                   List available workflows"
+    echo "  ralph run <workflow>              Execute workflow with dependencies"
+    echo "  ralph run <workflow> --dry-run    Show execution plan without running"
+    echo ""
+    echo -e "${CYAN}Maintenance:${NC}"
     echo "  ralph recover                     Find orphaned workstreams"
     echo "  ralph prune [--dry-run]           Remove stale workstream state"
     echo "  ralph history [--all] [project]   Show workstream history"
-    echo "  ralph help                        Show this help"
     echo ""
     echo -e "${CYAN}Server (REST API):${NC}"
     echo "  ralph server start                Start API server"
@@ -1935,8 +3059,12 @@ case $COMMAND in
         cmd_stop "$PROJECT" "$ARG1"
         ;;
     status)
-        PROJECT="${PROJECT:-$(detect_project)}"
-        cmd_status "$PROJECT"
+        # Global status if no project specified, project status otherwise
+        if [[ -z "$PROJECT" ]]; then
+            cmd_status_global
+        else
+            cmd_status "$PROJECT"
+        fi
         ;;
     attach)
         PROJECT="${PROJECT:-$(detect_project)}"
@@ -1953,6 +3081,29 @@ case $COMMAND in
     logs)
         PROJECT="${PROJECT:-$(detect_project)}"
         cmd_logs "$PROJECT" "$ARG1"
+        ;;
+    note)
+        PROJECT="${PROJECT:-$(detect_project)}"
+        cmd_note "$PROJECT" "$ARG1" "${@:4}"
+        ;;
+    notes)
+        cmd_notes "$PROJECT"
+        ;;
+    watch)
+        cmd_watch "${@:2}"
+        ;;
+    run)
+        cmd_run_workflow "$ARG1" "${@:3}"
+        ;;
+    workflows)
+        cmd_workflows
+        ;;
+    dashboard|menu)
+        if [[ -n "$PROJECT" ]]; then
+            interactive_mode "$PROJECT"
+        else
+            interactive_mode_global
+        fi
         ;;
     recover)
         cmd_recover
@@ -1977,11 +3128,8 @@ case $COMMAND in
         cmd_help
         ;;
     "")
-        if [[ -n "$PROJECT" ]]; then
-            interactive_mode "$PROJECT"
-        else
-            interactive_mode_global
-        fi
+        # Default: show global status (non-interactive)
+        cmd_status_global
         ;;
     *)
         error "Unknown command: $COMMAND"
