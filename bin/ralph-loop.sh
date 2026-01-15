@@ -24,10 +24,13 @@ WORKSTREAM_DIR="$RALPH_HOME/workstreams/${PROJECT}/${WORKSTREAM}"
 STATE_DIR="$RALPH_HOME/state/${PROJECT}/${WORKSTREAM}"
 LOG_DIR="$RALPH_HOME/logs/${PROJECT}/${WORKSTREAM}"
 
-# Files
+# Files - config paths (source of truth)
 PROMPT_FILE="${WORKSTREAM_DIR}/PROMPT.md"
-PROGRESS_FILE="${WORKSTREAM_DIR}/PROGRESS.md"
+PROGRESS_FILE_CONFIG="${WORKSTREAM_DIR}/PROGRESS.md"
 STATUS_FILE="${STATE_DIR}/status"
+
+# Local progress file in worktree (set after we know cwd)
+PROGRESS_FILE_LOCAL=""
 ITERATION_FILE="${STATE_DIR}/iteration"
 PID_FILE="${STATE_DIR}/pid"
 QUESTION_FILE="${STATE_DIR}/question"
@@ -98,9 +101,48 @@ set_status() {
     echo "$1" > "$STATUS_FILE"
 }
 
+# Set up local PROGRESS.md in worktree and sync with config
+setup_progress_file() {
+    PROGRESS_FILE_LOCAL="${PWD}/PROGRESS.md"
+
+    # If local doesn't exist but config does, copy it
+    if [[ ! -f "$PROGRESS_FILE_LOCAL" ]] && [[ -f "$PROGRESS_FILE_CONFIG" ]]; then
+        cp "$PROGRESS_FILE_CONFIG" "$PROGRESS_FILE_LOCAL"
+        log "Copied PROGRESS.md from config to worktree"
+    fi
+
+    # If neither exists, create a default one
+    if [[ ! -f "$PROGRESS_FILE_LOCAL" ]]; then
+        cat > "$PROGRESS_FILE_LOCAL" << 'EOF'
+# Progress
+
+## Status: IN_PROGRESS
+
+## Completed
+- (none yet)
+
+## Current Task
+- Starting work
+
+## Remaining
+- Review requirements
+- Implement changes
+- Test and verify
+EOF
+        log "Created default PROGRESS.md"
+    fi
+}
+
+# Sync local PROGRESS.md back to config directory
+sync_progress_file() {
+    if [[ -f "$PROGRESS_FILE_LOCAL" ]]; then
+        cp "$PROGRESS_FILE_LOCAL" "$PROGRESS_FILE_CONFIG"
+    fi
+}
+
 # Check if workstream is marked complete
 is_complete() {
-    local progress_file="${1:-$PROGRESS_FILE}"
+    local progress_file="${1:-$PROGRESS_FILE_LOCAL}"
     [[ -f "$progress_file" ]] && grep -qiE "^## Status: (COMPLETE|DONE|FINISHED)" "$progress_file"
 }
 
@@ -407,8 +449,10 @@ commit_multi_repo() {
 
 # Get hash of PROGRESS.md to detect stuck state
 get_progress_hash() {
-    if [[ -f "$PROGRESS_FILE" ]]; then
-        md5 -q "$PROGRESS_FILE" 2>/dev/null || md5sum "$PROGRESS_FILE" 2>/dev/null | cut -d' ' -f1
+    if [[ -n "$PROGRESS_FILE_LOCAL" ]] && [[ -f "$PROGRESS_FILE_LOCAL" ]]; then
+        md5 -q "$PROGRESS_FILE_LOCAL" 2>/dev/null || md5sum "$PROGRESS_FILE_LOCAL" 2>/dev/null | cut -d' ' -f1
+    elif [[ -f "$PROGRESS_FILE_CONFIG" ]]; then
+        md5 -q "$PROGRESS_FILE_CONFIG" 2>/dev/null || md5sum "$PROGRESS_FILE_CONFIG" 2>/dev/null | cut -d' ' -f1
     else
         echo "empty"
     fi
@@ -450,13 +494,14 @@ check_for_answer() {
         answer=$(cat "$ANSWER_FILE")
         log "Received answer: $answer"
 
-        # Append answer to progress file
+        # Append answer to progress file (use local if available)
+        local progress_target="${PROGRESS_FILE_LOCAL:-$PROGRESS_FILE_CONFIG}"
         {
             echo ""
             echo "---"
             echo "## User Answer (Iteration $ITERATION)"
             echo "$answer"
-        } >> "$PROGRESS_FILE"
+        } >> "$progress_target"
 
         # Clean up
         rm -f "$QUESTION_FILE" "$ANSWER_FILE"
@@ -492,6 +537,9 @@ check_stop_signals() {
 cleanup() {
     rm -f "$PID_FILE"
 
+    # Sync progress one last time
+    sync_progress_file 2>/dev/null || true
+
     local status
     status=$(cat "$STATUS_FILE" 2>/dev/null || echo "UNKNOWN")
     local final_status="$status"
@@ -508,6 +556,15 @@ cleanup() {
             notify "Ralph Error" "${PROJECT}/${WORKSTREAM} exited with error"
             ;;
     esac
+
+    # Add end_time to metrics before archiving
+    local metrics_file="$STATE_DIR/metrics.json"
+    if [[ -f "$metrics_file" ]]; then
+        local end_time
+        end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        jq --arg et "$end_time" '. + {end_time: $et}' "$metrics_file" > "${metrics_file}.tmp" 2>/dev/null && \
+            mv "${metrics_file}.tmp" "$metrics_file"
+    fi
 
     # Archive workstream metrics on any exit (unless already archived by auto-merge)
     if [[ -f "$STATE_DIR/metrics.json" ]] && [[ ! -f "$STATE_DIR/.archived" ]]; then
@@ -538,6 +595,9 @@ echo $$ > "$PID_FILE"
 set_status "RUNNING"
 set_iteration 0
 init_metrics
+
+# Set up local PROGRESS.md in worktree
+setup_progress_file
 LAST_PROGRESS_HASH=$(get_progress_hash)
 
 # Start logging
@@ -547,7 +607,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 log "Starting Ralph: ${PROJECT}/${WORKSTREAM}"
 log "  Max iterations: $MAX_ITERATIONS"
 log "  Prompt: $PROMPT_FILE"
-log "  Progress: $PROGRESS_FILE"
+log "  Progress: $PROGRESS_FILE_LOCAL"
 log "  Log: $LOG_FILE"
 log "  Project type: $(get_project_type)"
 echo ""
@@ -581,8 +641,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         echo ""
         echo "---"
         echo "## Current Progress"
-        if [[ -f "$PROGRESS_FILE" ]]; then
-            cat "$PROGRESS_FILE"
+        if [[ -f "$PROGRESS_FILE_LOCAL" ]]; then
+            cat "$PROGRESS_FILE_LOCAL"
         else
             echo "_No progress yet - this is the first iteration._"
         fi
@@ -594,14 +654,18 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
         echo "- Branch: ralph/${WORKSTREAM}"
         echo "- Current iteration: $ITERATION of $MAX_ITERATIONS"
         echo "- Timestamp: $(date -Iseconds)"
+        echo "- Progress file: PROGRESS.md (in current directory)"
         echo ""
         echo "## Instructions"
-        echo "1. Read PROGRESS.md to understand current state"
-        echo "2. Pick the next incomplete task"
-        echo "3. Make minimal, focused changes"
-        echo "4. Update PROGRESS.md with what you did"
-        echo "5. If blocked or need input, write 'NEEDS_INPUT: <question>' to PROGRESS.md"
-        echo "6. If all tasks complete, write '## Status: COMPLETE' to PROGRESS.md"
+        echo "1. Review the Current Progress section above"
+        echo "2. Pick the next incomplete task from the Remaining list"
+        echo "3. Make minimal, focused changes to complete that task"
+        echo "4. **IMPORTANT**: Update ./PROGRESS.md file to reflect what you completed:"
+        echo "   - Move completed tasks from Remaining to Completed"
+        echo "   - Update Current Task to the next item"
+        echo "   - Add any notes about what was done"
+        echo "5. If blocked or need user input, add 'NEEDS_INPUT: <your question>' to PROGRESS.md"
+        echo "6. If ALL tasks are complete, change the Status line to: '## Status: COMPLETE'"
     } > "$CLAUDE_INPUT"
 
     # Run Claude with JSON output format for metrics capture
@@ -620,8 +684,8 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
     rm -f "$CLAUDE_INPUT"
 
-    # Update metrics from JSON output
-    update_metrics "$claude_json"
+    # Update metrics from JSON output (don't exit on failure)
+    update_metrics "$claude_json" || warn "Failed to update metrics for iteration $ITERATION"
     rm -f "$claude_output" "$claude_json"
 
     # Check for errors
@@ -652,9 +716,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     fi
 
     # Check for NEEDS_INPUT marker
-    if [[ -f "$PROGRESS_FILE" ]] && grep -q "NEEDS_INPUT:" "$PROGRESS_FILE"; then
+    if [[ -f "$PROGRESS_FILE_LOCAL" ]] && grep -q "NEEDS_INPUT:" "$PROGRESS_FILE_LOCAL"; then
         local question
-        question=$(grep "NEEDS_INPUT:" "$PROGRESS_FILE" | tail -1 | sed 's/.*NEEDS_INPUT://' | xargs)
+        question=$(grep "NEEDS_INPUT:" "$PROGRESS_FILE_LOCAL" | tail -1 | sed 's/.*NEEDS_INPUT://' | xargs)
         if [[ -n "$question" ]]; then
             log "Ralph has a question: $question"
             echo "$question" > "$QUESTION_FILE"
@@ -682,6 +746,9 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if commit_changes; then
         STUCK_COUNTER=0  # Reset stuck counter on successful commit
     fi
+
+    # Sync progress file back to config directory
+    sync_progress_file
 
     # Brief pause between iterations
     sleep 2
