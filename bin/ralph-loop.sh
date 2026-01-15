@@ -54,6 +54,72 @@ log() { echo -e "${GREEN}[Ralph]${NC} $1"; }
 warn() { echo -e "${YELLOW}[Ralph]${NC} $1"; }
 error() { echo -e "${RED}[Ralph]${NC} $1"; }
 
+# Event streaming - emit events to global stream for `ralph watch`
+EVENTS_DIR="$RALPH_HOME/events"
+EVENTS_FILE="$EVENTS_DIR/stream"
+
+emit_event() {
+    local event_type="$1"
+    shift
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Ensure events directory exists
+    mkdir -p "$EVENTS_DIR"
+
+    # Build JSON event
+    local json
+    case "$event_type" in
+        iteration_start)
+            local iter="$1" max="$2"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"iteration_start","iter":%d,"max":%d}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "$iter" "$max")
+            ;;
+        iteration_end)
+            local iter="$1" exit_code="$2" cost="$3" tokens_in="$4" tokens_out="$5"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"iteration_end","iter":%d,"exit_code":%d,"cost":%s,"tokens_in":%d,"tokens_out":%d}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "$iter" "$exit_code" "$cost" "$tokens_in" "$tokens_out")
+            ;;
+        status_change)
+            local status="$1" msg="$2"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"status","status":"%s","msg":"%s"}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "$status" "${msg//\"/\\\"}")
+            ;;
+        needs_input)
+            local question="$1"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"needs_input","question":"%s"}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "${question//\"/\\\"}")
+            ;;
+        progress)
+            local msg="$1"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"progress","msg":"%s"}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "${msg//\"/\\\"}")
+            ;;
+        complete)
+            local final_status="$1"
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"complete","status":"%s"}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "$final_status")
+            ;;
+        *)
+            json=$(printf '{"ts":"%s","project":"%s","ws":"%s","event":"%s"}' \
+                   "$ts" "$PROJECT" "$WORKSTREAM" "$event_type")
+            ;;
+    esac
+
+    # Append to event stream
+    echo "$json" >> "$EVENTS_FILE"
+
+    # Rotate if file gets too big (> 1MB)
+    if [[ -f "$EVENTS_FILE" ]]; then
+        local size
+        size=$(stat -f%z "$EVENTS_FILE" 2>/dev/null || stat -c%s "$EVENTS_FILE" 2>/dev/null || echo 0)
+        if [[ $size -gt 1048576 ]]; then
+            # Keep last 1000 lines
+            tail -1000 "$EVENTS_FILE" > "${EVENTS_FILE}.tmp" && mv "${EVENTS_FILE}.tmp" "$EVENTS_FILE"
+        fi
+    fi
+}
+
 # Get Bark URL from config
 get_bark_url() {
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -612,12 +678,18 @@ log "  Log: $LOG_FILE"
 log "  Project type: $(get_project_type)"
 echo ""
 
+# Emit start event
+emit_event "status_change" "RUNNING" "Starting workstream"
+
 # Main loop
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     ITERATION=$((ITERATION + 1))
     set_iteration "$ITERATION"
 
     log "=== [${PROJECT}/${WORKSTREAM}] Iteration $ITERATION of $MAX_ITERATIONS ==="
+
+    # Emit iteration start event
+    emit_event "iteration_start" "$ITERATION" "$MAX_ITERATIONS"
 
     # Check for stop signals
     if check_stop_signals; then
@@ -686,12 +758,21 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
     # Update metrics from JSON output (don't exit on failure)
     update_metrics "$claude_json" || warn "Failed to update metrics for iteration $ITERATION"
+
+    # Emit iteration end event with metrics
+    local iter_tokens_in iter_tokens_out iter_cost
+    iter_tokens_in=$(jq -r '.usage.input_tokens // 0' "$claude_json" 2>/dev/null || echo 0)
+    iter_tokens_out=$(jq -r '.usage.output_tokens // 0' "$claude_json" 2>/dev/null || echo 0)
+    iter_cost=$(jq -r '.total_cost_usd // 0' "$claude_json" 2>/dev/null || echo 0)
+    emit_event "iteration_end" "$ITERATION" "$EXIT_CODE" "$iter_cost" "$iter_tokens_in" "$iter_tokens_out"
+
     rm -f "$claude_output" "$claude_json"
 
     # Check for errors
     if [[ $EXIT_CODE -ne 0 ]] && [[ $EXIT_CODE -ne 130 ]]; then
         # 130 is Ctrl-C, which is expected
         set_status "ERROR"
+        emit_event "status_change" "ERROR" "Iteration $ITERATION failed (exit $EXIT_CODE)"
         notify "Ralph Error" "${PROJECT}/${WORKSTREAM} iteration $ITERATION failed (exit $EXIT_CODE)"
     fi
 
@@ -699,10 +780,12 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
     if is_complete; then
         log "Workstream marked as COMPLETE!"
         set_status "COMPLETE"
+        emit_event "complete" "COMPLETE"
 
         # Auto-merge if enabled
         if is_auto_merge_enabled; then
             if auto_merge; then
+                emit_event "status_change" "MERGED" "Auto-merged successfully"
                 exit 0
             else
                 # Merge failed, but workstream is complete
@@ -723,6 +806,7 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
             log "Ralph has a question: $question"
             echo "$question" > "$QUESTION_FILE"
             set_status "NEEDS_INPUT"
+            emit_event "needs_input" "$question"
             notify "Ralph Question" "$question"
 
             # Wait for answer (check every 10 seconds)
@@ -758,12 +842,14 @@ done
 if is_complete; then
     log "Workstream marked as COMPLETE (reached max iterations)"
     set_status "COMPLETE"
+    emit_event "complete" "COMPLETE"
     if is_auto_merge_enabled; then
-        auto_merge && exit 0
+        auto_merge && emit_event "status_change" "MERGED" "Auto-merged" && exit 0
     fi
     exit 0
 fi
 
 log "Completed $MAX_ITERATIONS iterations"
 set_status "STOPPED"
+emit_event "status_change" "STOPPED" "Reached max iterations ($MAX_ITERATIONS)"
 notify "Ralph Complete" "${PROJECT}/${WORKSTREAM} finished $MAX_ITERATIONS iterations"
