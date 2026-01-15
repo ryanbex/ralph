@@ -2296,20 +2296,54 @@ cmd_run_workflow() {
         return 1
     fi
 
-    # Resolve workflow file
-    local workflow_file="$workflow_arg"
-    if [[ ! -f "$workflow_file" ]]; then
-        workflow_file="$WORKFLOWS_DIR/$workflow_arg"
+    # Resolve workflow file - try multiple locations
+    local workflow_file=""
+    local tried_paths=()
+
+    # Try as-is
+    tried_paths+=("$workflow_arg")
+    if [[ -f "$workflow_arg" ]]; then
+        workflow_file="$workflow_arg"
     fi
-    if [[ ! -f "$workflow_file" ]] && [[ ! -f "${workflow_file}.yaml" ]]; then
-        workflow_file="${WORKFLOWS_DIR}/${workflow_arg}.yaml"
+
+    # Try with .yaml extension
+    if [[ -z "$workflow_file" ]]; then
+        tried_paths+=("${workflow_arg}.yaml")
+        if [[ -f "${workflow_arg}.yaml" ]]; then
+            workflow_file="${workflow_arg}.yaml"
+        fi
     fi
-    if [[ ! -f "$workflow_file" ]]; then
+
+    # Try in workflows directory
+    if [[ -z "$workflow_file" ]]; then
+        tried_paths+=("$WORKFLOWS_DIR/$workflow_arg")
+        if [[ -f "$WORKFLOWS_DIR/$workflow_arg" ]]; then
+            workflow_file="$WORKFLOWS_DIR/$workflow_arg"
+        fi
+    fi
+
+    # Try in workflows directory with .yaml extension
+    if [[ -z "$workflow_file" ]]; then
+        tried_paths+=("${WORKFLOWS_DIR}/${workflow_arg}.yaml")
+        if [[ -f "${WORKFLOWS_DIR}/${workflow_arg}.yaml" ]]; then
+            workflow_file="${WORKFLOWS_DIR}/${workflow_arg}.yaml"
+        fi
+    fi
+
+    # Try in workflows directory with .yml extension
+    if [[ -z "$workflow_file" ]]; then
+        tried_paths+=("${WORKFLOWS_DIR}/${workflow_arg}.yml")
+        if [[ -f "${WORKFLOWS_DIR}/${workflow_arg}.yml" ]]; then
+            workflow_file="${WORKFLOWS_DIR}/${workflow_arg}.yml"
+        fi
+    fi
+
+    if [[ -z "$workflow_file" ]]; then
         error "Workflow not found: $workflow_arg"
         echo "  Tried:"
-        echo "    - $workflow_arg"
-        echo "    - $WORKFLOWS_DIR/$workflow_arg"
-        echo "    - ${WORKFLOWS_DIR}/${workflow_arg}.yaml"
+        for path in "${tried_paths[@]}"; do
+            echo "    - $path"
+        done
         return 1
     fi
 

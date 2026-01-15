@@ -100,10 +100,9 @@ export const workstreams = pgTable('workstreams', {
   status: text('status').default('pending').notNull(),
   currentIteration: integer('current_iteration').default(0).notNull(),
   maxIterations: integer('max_iterations').default(20).notNull(),
-  fargateTaskArn: text('fargate_task_arn'),
-  fargateCluster: text('fargate_cluster'),
-  cloudwatchLogGroup: text('cloudwatch_log_group'),
-  cloudwatchLogStream: text('cloudwatch_log_stream'),
+  // Fly.io references
+  flyMachineId: text('fly_machine_id'),
+  flyAppName: text('fly_app_name'),
   promptBlobUrl: text('prompt_blob_url'),
   progressBlobUrl: text('progress_blob_url'),
   tokensIn: bigint('tokens_in', { mode: 'number' }).default(0).notNull(),
