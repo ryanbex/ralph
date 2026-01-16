@@ -1,5 +1,5 @@
 # Ralph Worker Container
-# Runs Claude Code iterations for workstreams
+# Runs Claude Code iterations for workstreams on Fly.io
 
 FROM ubuntu:22.04
 
@@ -28,30 +28,24 @@ RUN npm install -g @anthropic-ai/claude-code
 # Create workspace directory
 RUN mkdir -p /workspace
 
-# Copy the cloud-adapted loop script
-COPY ralph-loop-cloud.sh /usr/local/bin/ralph-loop-cloud.sh
-RUN chmod +x /usr/local/bin/ralph-loop-cloud.sh
-
-# Copy entrypoint script
+# Copy scripts
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY ralph-loop-cloud.sh /usr/local/bin/ralph-loop-cloud.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/ralph-loop-cloud.sh
 
 # Set working directory
 WORKDIR /workspace
 
-# Environment variables (to be overridden at runtime)
-ENV RALPH_ENV=dev
-ENV WORKSTREAM_ID=""
-ENV PROJECT_SLUG=""
-ENV REPO_URL=""
-ENV BRANCH=""
-ENV MAX_ITERATIONS=20
-ENV RALPH_API_URL=""
-ENV RALPH_API_KEY=""
-ENV PROMPT_BLOB_URL=""
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD echo "healthy" || exit 1
+# Environment variables (to be provided at runtime by Fly.io Machines API)
+# Required:
+#   WORKSTREAM_ID - UUID of the workstream
+#   GITHUB_REPO_URL - Git repository URL
+#   PROMPT_BLOB_URL - URL to download PROMPT.md
+#   ANTHROPIC_API_KEY - Anthropic API key for Claude
+# Optional:
+#   BASE_BRANCH - Base branch (default: main)
+#   MAX_ITERATIONS - Max iterations (default: 20)
+#   RALPH_API_URL - API URL for callbacks (default: http://localhost:3000)
+#   PROGRESS_BLOB_URL - URL to download existing PROGRESS.md
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

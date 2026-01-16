@@ -11,6 +11,7 @@ import {
 } from "@/components/pixel/PixelCard"
 import { PixelProgress } from "@/components/pixel/PixelProgress"
 import { PixelButton } from "@/components/pixel/PixelButton"
+import { WorkstreamControls } from "@/components/WorkstreamControls"
 import type { WorkstreamStatus } from "@/components/pixel/WorkstreamCard"
 
 interface WorkstreamDetailPageProps {
@@ -75,8 +76,7 @@ export default async function WorkstreamDetailPage({ params }: WorkstreamDetailP
   const status = workstream.status as WorkstreamStatus
   const config = statusConfig[status]
   const isActive = ["running", "provisioning", "needs_input"].includes(status)
-  const canStart = status === "pending" || status === "stopped"
-  const canStop = ["running", "needs_input", "stuck"].includes(status)
+  const hasPrompt = Boolean(workstream.promptBlobUrl)
 
   return (
     <div className="min-h-screen bg-simpson-dark">
@@ -107,21 +107,7 @@ export default async function WorkstreamDetailPage({ params }: WorkstreamDetailP
         {/* Status Card */}
         <PixelCard variant={isActive ? "elevated" : "default"}>
           <PixelCardHeader>
-            <div className="flex items-center justify-between">
-              <PixelCardTitle>STATUS</PixelCardTitle>
-              <div className="flex items-center gap-2">
-                {canStart && (
-                  <PixelButton variant="success" size="sm" disabled>
-                    START (COMING SOON)
-                  </PixelButton>
-                )}
-                {canStop && (
-                  <PixelButton variant="danger" size="sm" disabled>
-                    STOP (COMING SOON)
-                  </PixelButton>
-                )}
-              </div>
-            </div>
+            <PixelCardTitle>STATUS</PixelCardTitle>
           </PixelCardHeader>
           <PixelCardContent>
             <p className="font-pixel-body text-simpson-white/80 text-sm">
@@ -143,6 +129,16 @@ export default async function WorkstreamDetailPage({ params }: WorkstreamDetailP
                 max={workstream.maxIterations}
                 variant={config.variant}
                 size="md"
+              />
+            </div>
+
+            {/* Controls */}
+            <div className="mt-6">
+              <WorkstreamControls
+                projectSlug={slug}
+                workstreamSlug={wsSlug}
+                status={status}
+                hasPrompt={hasPrompt}
               />
             </div>
           </PixelCardContent>

@@ -1,97 +1,105 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ConnectionStatus,
-  getWebSocketUrl,
   LogLine,
-  RalphWebSocket,
-} from "@/lib/aws/websocket";
+  LogStream,
+} from "@/lib/fly/logs"
 
 export interface UseWorkstreamLogsOptions {
-  maxLogs?: number;
-  autoConnect?: boolean;
+  maxLogs?: number
+  autoConnect?: boolean
 }
 
 export interface UseWorkstreamLogsReturn {
-  logs: LogLine[];
-  status: ConnectionStatus;
-  connect: () => void;
-  disconnect: () => void;
-  clearLogs: () => void;
+  logs: LogLine[]
+  status: ConnectionStatus
+  connect: () => void
+  disconnect: () => void
+  clearLogs: () => void
 }
 
-const DEFAULT_MAX_LOGS = 1000;
+const DEFAULT_MAX_LOGS = 1000
 
 export function useWorkstreamLogs(
-  workstreamId: string,
+  projectSlug: string,
+  workstreamSlug: string,
   options: UseWorkstreamLogsOptions = {}
 ): UseWorkstreamLogsReturn {
-  const { maxLogs = DEFAULT_MAX_LOGS, autoConnect = true } = options;
+  const { maxLogs = DEFAULT_MAX_LOGS, autoConnect = true } = options
 
-  const [logs, setLogs] = useState<LogLine[]>([]);
-  const [status, setStatus] = useState<ConnectionStatus>("disconnected");
-  const wsRef = useRef<RalphWebSocket | null>(null);
+  const [logs, setLogs] = useState<LogLine[]>([])
+  const [status, setStatus] = useState<ConnectionStatus>("disconnected")
+  const streamRef = useRef<LogStream | null>(null)
 
   const addLog = useCallback(
     (log: LogLine) => {
       setLogs((prev) => {
-        const newLogs = [...prev, log];
+        const newLogs = [...prev, log]
         if (newLogs.length > maxLogs) {
-          return newLogs.slice(-maxLogs);
+          return newLogs.slice(-maxLogs)
         }
-        return newLogs;
-      });
+        return newLogs
+      })
     },
     [maxLogs]
-  );
+  )
 
   const connect = useCallback(() => {
-    if (wsRef.current?.isConnected()) {
-      return;
+    if (streamRef.current?.isConnected()) {
+      return
     }
 
-    setStatus("connecting");
+    // Disconnect existing stream
+    streamRef.current?.disconnect()
 
     try {
-      const url = getWebSocketUrl();
+      streamRef.current = new LogStream({
+        projectSlug,
+        workstreamSlug,
+        onLog: addLog,
+        onConnect: (data) => {
+          console.log(
+            `[Logs] Connected to workstream ${data.workstreamId}, machine ${data.machineId}`
+          )
+        },
+        onError: (error) => {
+          console.error("[Logs] Error:", error)
+        },
+        onEnd: () => {
+          console.log("[Logs] Stream ended")
+        },
+        onStatusChange: setStatus,
+      })
 
-      wsRef.current = new RalphWebSocket({
-        url,
-        workstreamId,
-        onMessage: addLog,
-        onOpen: () => setStatus("connected"),
-        onClose: () => setStatus("disconnected"),
-        onError: () => setStatus("error"),
-      });
-
-      wsRef.current.connect();
+      streamRef.current.connect()
     } catch (error) {
-      console.error("Failed to connect to WebSocket:", error);
-      setStatus("error");
+      console.error("Failed to connect to log stream:", error)
+      setStatus("error")
     }
-  }, [workstreamId, addLog]);
+  }, [projectSlug, workstreamSlug, addLog])
 
   const disconnect = useCallback(() => {
-    wsRef.current?.disconnect();
-    wsRef.current = null;
-    setStatus("disconnected");
-  }, []);
+    streamRef.current?.disconnect()
+    streamRef.current = null
+    setStatus("disconnected")
+  }, [])
 
   const clearLogs = useCallback(() => {
-    setLogs([]);
-  }, []);
+    setLogs([])
+  }, [])
 
   useEffect(() => {
-    if (autoConnect && workstreamId) {
-      connect();
+    if (autoConnect && projectSlug && workstreamSlug) {
+      connect()
     }
 
     return () => {
-      wsRef.current?.disconnect();
-      wsRef.current = null;
-    };
-  }, [workstreamId, autoConnect, connect]);
+      streamRef.current?.disconnect()
+      streamRef.current = null
+    }
+  }, [projectSlug, workstreamSlug, autoConnect, connect])
 
   return {
     logs,
@@ -99,5 +107,5 @@ export function useWorkstreamLogs(
     connect,
     disconnect,
     clearLogs,
-  };
+  }
 }

@@ -2380,13 +2380,14 @@ cmd_run_workflow() {
 
     # Group workstreams by dependency level
     local level=0
-    local remaining="$all_workstreams"
+    local remaining
+    remaining=$(echo "$all_workstreams" | tr '\n' ' ')
     local completed=""
 
-    while [[ -n "$remaining" ]]; do
+    while [[ -n "$(echo "$remaining" | tr -d ' ')" ]]; do
         local ready
         ready=$(get_ready_workstreams "$workflow_json" "$completed")
-        ready=$(echo "$ready" | grep -v '^$' || true)
+        ready=$(echo "$ready" | tr '\n' ' ' | xargs)
 
         if [[ -z "$ready" ]]; then
             break
@@ -2400,16 +2401,20 @@ cmd_run_workflow() {
         fi
 
         for ws in $ready; do
+            [[ -z "$ws" ]] && continue
+
             # Skip if not in remaining
-            echo "$remaining" | grep -q "^${ws}$" || continue
+            if ! echo " $remaining " | grep -q " ${ws} "; then
+                continue
+            fi
 
             local iterations prompt deps
-            iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations" 2>/dev/null)
-            prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt" 2>/dev/null)
-            deps=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .depends_on | join(\", \")" 2>/dev/null)
+            iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations // 20" 2>/dev/null) || iterations=20
+            prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt // \"\"" 2>/dev/null) || prompt=""
+            deps=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .depends_on // [] | join(\", \")" 2>/dev/null) || deps=""
 
             echo -e "    ${BOLD}$ws${NC} (${iterations} iterations)"
-            if [[ -n "$deps" ]] && [[ "$deps" != "null" ]]; then
+            if [[ -n "$deps" ]]; then
                 echo -e "      ${DIM}depends on: $deps${NC}"
             fi
             echo -e "      ${DIM}\"${prompt:0:50}...\"${NC}"
@@ -2417,8 +2422,8 @@ cmd_run_workflow() {
             # Mark as "completed" for next round
             completed="$completed $ws"
 
-            # Remove from remaining
-            remaining=$(echo "$remaining" | grep -v "^${ws}$")
+            # Remove from remaining (space-delimited)
+            remaining=$(echo " $remaining " | sed "s/ ${ws} / /g" | xargs)
         done
 
         level=$((level + 1))
@@ -2456,12 +2461,13 @@ cmd_run_workflow() {
 
     # Start workstreams with no dependencies
     local ready
-    ready=$(get_ready_workstreams "$workflow_json" "$completed")
+    ready=$(get_ready_workstreams "$workflow_json" "$completed" | tr '\n' ' ' | xargs)
 
     for ws in $ready; do
+        [[ -z "$ws" ]] && continue
         local iterations prompt
-        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations" 2>/dev/null)
-        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt" 2>/dev/null)
+        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .iterations // 20" 2>/dev/null) || iterations=20
+        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$ws\") | .prompt // \"\"" 2>/dev/null) || prompt=""
 
         echo -e "${GREEN}▶${NC} Starting ${CYAN}$ws${NC}..."
 
@@ -2505,15 +2511,16 @@ cmd_run_workflow() {
 
                     # Check if any new workstreams can start
                     local newly_ready
-                    newly_ready=$(get_ready_workstreams "$workflow_json" "$completed")
+                    newly_ready=$(get_ready_workstreams "$workflow_json" "$completed" | tr '\n' ' ' | xargs)
 
                     for new_ws in $newly_ready; do
+                        [[ -z "$new_ws" ]] && continue
                         # Skip if already started
-                        echo "$completed $running" | grep -q "$new_ws" && continue
+                        echo " $completed $running " | grep -q " $new_ws " && continue
 
                         local iterations prompt
-                        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .iterations" 2>/dev/null)
-                        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .prompt" 2>/dev/null)
+                        iterations=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .iterations // 20" 2>/dev/null) || iterations=20
+                        prompt=$(echo "$workflow_json" | jq -r ".workstreams[] | select(.name==\"$new_ws\") | .prompt // \"\"" 2>/dev/null) || prompt=""
 
                         echo -e "${GREEN}▶${NC} Starting ${CYAN}$new_ws${NC} (deps satisfied)..."
 
@@ -3118,7 +3125,7 @@ case $COMMAND in
         ;;
     note)
         PROJECT="${PROJECT:-$(detect_project)}"
-        cmd_note "$PROJECT" "$ARG1" "${@:4}"
+        cmd_note "$PROJECT" "$ARG1" "${@:3}"
         ;;
     notes)
         cmd_notes "$PROJECT"

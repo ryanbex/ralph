@@ -10,8 +10,11 @@ Ralph is an autonomous AI development orchestrator that runs parallel Claude Cod
 ## Quick Commands
 
 ```bash
-# Interactive dashboard
+# Quick status with diagnostics (default)
 ralph
+
+# Interactive dashboard
+ralph dashboard
 
 # Register current project
 ralph projects add
@@ -42,6 +45,20 @@ ralph prune [--dry-run]
 
 # View workstream history (tokens, cost, duration)
 ralph history [--all] [project]
+
+# Workstream notes
+ralph -p <project> note <ws> "context for later"
+ralph notes                    # List all notes
+
+# Live progress streaming
+ralph watch                    # All workstreams
+ralph watch <project>          # Filter by project
+ralph watch --json             # Raw JSONL for piping
+
+# Workflow orchestration (DAG dependencies)
+ralph workflows                # List available workflows
+ralph run <workflow> --dry-run # Preview execution plan
+ralph run <workflow>           # Execute with auto-parallelism
 ```
 
 ## Custom Slash Commands
@@ -107,8 +124,8 @@ fi
 ```
 ~/.ralph/
 ├── bin/
-│   ├── ralph              # Main CLI (~1800 lines)
-│   └── ralph-loop.sh      # Iteration engine (~350 lines)
+│   ├── ralph              # Main CLI (~2500 lines)
+│   └── ralph-loop.sh      # Iteration engine (~850 lines)
 ├── config.yaml            # Global config
 ├── projects/              # Project registrations
 │   └── <project>.yaml
@@ -125,7 +142,12 @@ fi
 │           ├── metrics.json   # Token usage, cost, timing
 │           ├── pid
 │           ├── question
-│           └── answer
+│           ├── answer
+│           └── note           # Workstream notes
+├── events/                # Live progress streaming
+│   └── stream             # JSONL event log (auto-rotating)
+├── workflows/             # Workflow definitions
+│   └── <name>.yaml        # DAG workflow specs
 └── archive/               # Historical records
     └── history.json       # JSONL: all completed workstreams
 ```
@@ -213,6 +235,38 @@ server:
 - Commit format: `chore(<workstream>): iteration N`
 - Workstream isolation via git worktrees
 - Never force push main
+
+## Workflow Orchestration
+
+Define complex multi-workstream tasks with dependencies:
+
+```yaml
+# ~/.ralph/workflows/my-feature.yaml
+name: my-feature
+workstreams:
+  - name: auth
+    prompt: "Implement user authentication"
+    iterations: 15
+
+  - name: database
+    prompt: "Set up database models"
+    iterations: 10
+
+  - name: api
+    prompt: "Create API endpoints"
+    iterations: 20
+    depends_on: [auth, database]  # Waits for both
+
+  - name: dashboard
+    prompt: "Build dashboard UI"
+    iterations: 25
+    depends_on: [api]
+```
+
+Execution automatically parallelizes independent workstreams:
+- `auth` and `database` start together (no dependencies)
+- `api` starts when both complete
+- `dashboard` starts when `api` completes
 
 ## Links
 

@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useRef, type HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
-import { ConnectionStatus, LogLine } from "@/lib/aws/websocket";
+import { ConnectionStatus, LogLine } from "@/lib/fly/logs";
 
 export interface LogViewerProps extends HTMLAttributes<HTMLDivElement> {
   logs: LogLine[];

@@ -1,0 +1,23 @@
+# Fly.io configuration for Ralph Workers
+# These are ephemeral machines spawned per-workstream, not persistent services
+
+app = "ralph-workers"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RALPH_ENV = "production"
+
+# No HTTP service - these are ephemeral compute machines
+# Machines are created via the Machines API, not deployed traditionally
+
+# Recommended machine configuration (set via API when creating machines):
+# - cpu_kind: shared
+# - cpus: 1
+# - memory_mb: 2048
+# - auto_destroy: true (cleanup when process exits)
+
+[experimental]
+  auto_rollback = false
