@@ -38,35 +38,44 @@ Ralph is an autonomous AI development orchestrator that enables parallel, persis
 
 ### 1. CLI (`~/.ralph/bin/ralph`)
 
-The main command-line interface (~1200 lines of Bash). Handles:
+The main command-line interface (~2500 lines of Bash). Handles:
 
 - **Project Registry**: Add, list, remove, update projects
 - **Workstream Management**: Start, stop, status, attach, cleanup
 - **Interactive Dashboard**: TUI for monitoring all workstreams
 - **Recovery**: Detect and restart orphaned workstreams
 - **Server Management**: Start/stop REST API
+- **Event Streaming**: Real-time progress via `ralph watch`
+- **Workflow Orchestration**: DAG-based execution via `ralph run`
+- **Notes & Diagnostics**: Per-workstream notes and status diagnostics
 
 Key functions:
 ```bash
-cmd_start()      # Create worktree, start tmux session
-cmd_stop()       # Send stop signal to workstream
-cmd_cleanup()    # Merge branch, remove worktree
-cmd_recover()    # Find and restart orphans
-detect_project() # Auto-detect project from cwd
+cmd_start()          # Create worktree, start tmux session
+cmd_stop()           # Send stop signal to workstream
+cmd_cleanup()        # Merge branch, remove worktree
+cmd_recover()        # Find and restart orphans
+detect_project()     # Auto-detect project from cwd
+cmd_watch()          # Stream real-time events from workstreams
+cmd_run_workflow()   # Execute workflow with dependency resolution
+cmd_note()           # Add/view notes on workstreams
+cmd_status_global()  # Quick status with diagnostics
 ```
 
 ### 2. Iteration Loop (`~/.ralph/bin/ralph-loop.sh`)
 
-The core iteration engine (~300 lines of Bash). Each iteration:
+The core iteration engine (~850 lines of Bash). Each iteration:
 
 1. **Check stop signals** - Global, project, or workstream level
 2. **Check for user answers** - If question was pending
 3. **Build prompt** - Combine PROMPT.md + PROGRESS.md + context
-4. **Run Claude** - Pipe to `claude --dangerously-skip-permissions`
-5. **Check completion** - Look for `## Status: COMPLETE`
-6. **Check questions** - Look for `NEEDS_INPUT:`
-7. **Commit changes** - Auto-commit with workstream prefix
-8. **Detect stuck** - Hash PROGRESS.md, notify if unchanged
+4. **Emit event** - Stream iteration_start to event log
+5. **Run Claude** - Pipe to `claude --dangerously-skip-permissions`
+6. **Check completion** - Look for `## Status: COMPLETE`
+7. **Check questions** - Look for `NEEDS_INPUT:`
+8. **Commit changes** - Auto-commit with workstream prefix
+9. **Emit event** - Stream iteration_end with cost/tokens
+10. **Detect stuck** - Hash PROGRESS.md, notify if unchanged
 
 ```bash
 while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
@@ -130,6 +139,8 @@ Runtime state files:
 | `pid` | Process ID of ralph-loop.sh |
 | `question` | Pending question text |
 | `answer` | User's answer (triggers continuation) |
+| `note` | User-added notes for context |
+| `metrics.json` | Token usage, cost, and timing data |
 
 ### 6. REST API Server (`~/.ralph/server/`)
 
@@ -147,6 +158,88 @@ GET  /health                             # Health check
 ```
 
 Authentication via `X-Ralph-Key` header.
+
+### 7. Event Streaming (`~/.ralph/events/`)
+
+Real-time progress events for parent processes to monitor child workstreams:
+
+```
+~/.ralph/events/
+└── stream          # Append-only JSONL event log
+```
+
+**Event Format (JSONL):**
+```json
+{"ts":"2026-01-14T10:30:00Z","project":"ralph","ws":"web-dashboard","event":"iteration_start","iter":12,"max":20}
+{"ts":"2026-01-14T10:30:01Z","project":"ralph","ws":"web-dashboard","event":"iteration_end","iter":12,"exit_code":0,"cost":0.45,"tokens_in":50000,"tokens_out":10000}
+{"ts":"2026-01-14T10:30:02Z","project":"myapp","ws":"api","event":"needs_input","question":"Should I use REST or GraphQL?"}
+{"ts":"2026-01-14T10:30:03Z","project":"myapp","ws":"api","event":"status","status":"COMPLETE"}
+```
+
+**Event Types:**
+| Event | Description |
+|-------|-------------|
+| `iteration_start` | Beginning of an iteration |
+| `iteration_end` | End of iteration with cost/tokens |
+| `status` | Status change (COMPLETE, STUCK, ERROR) |
+| `needs_input` | Question pending, needs human input |
+| `progress` | Progress message from PROGRESS.md |
+
+The `ralph watch` command streams these events in a formatted TUI.
+
+### 8. Workflow Orchestration (`~/.ralph/workflows/`)
+
+YAML workflow definitions for DAG-based workstream execution:
+
+```yaml
+# ~/.ralph/workflows/my-feature.yaml
+name: my-feature
+workstreams:
+  - name: auth
+    prompt: "Implement user authentication"
+    iterations: 15
+
+  - name: database
+    prompt: "Set up database models"
+    iterations: 10
+
+  - name: api
+    prompt: "Create API endpoints"
+    iterations: 20
+    depends_on: [auth, database]  # waits for both
+
+  - name: dashboard
+    prompt: "Build dashboard UI"
+    iterations: 25
+    depends_on: [api]
+```
+
+**Execution Model:**
+```
+    ┌───────┐   ┌──────────┐
+    │ auth  │   │ database │    ← Start in parallel (no deps)
+    └───┬───┘   └────┬─────┘
+        │            │
+        └─────┬──────┘
+              │ both complete
+              ▼
+          ┌───────┐
+          │  api  │             ← Starts when deps finish
+          └───┬───┘
+              │ complete
+              ▼
+        ┌───────────┐
+        │ dashboard │           ← Starts when api finishes
+        └───────────┘
+```
+
+The orchestrator:
+1. Parses workflow YAML
+2. Builds dependency graph
+3. Detects cycles (fails if found)
+4. Starts all workstreams with no dependencies
+5. Monitors completions
+6. Starts dependent workstreams when deps are satisfied
 
 ## Data Flow
 

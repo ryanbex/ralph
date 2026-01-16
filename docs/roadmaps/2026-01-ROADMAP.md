@@ -5,6 +5,43 @@ Transform Ralph from a local CLI tool into a web-deployable platform where non-e
 
 ---
 
+## CLI Foundation (Completed January 2026)
+
+Before building the web platform, the local CLI was enhanced with features that will inform the cloud architecture:
+
+### Status + Diagnostics + Notes ✅
+- `ralph` (no args) shows quick status table with diagnostics
+- `ralph -p <proj> note <ws> "text"` adds notes to workstreams
+- `ralph notes` shows all workstream notes
+- Diagnostics identify stuck/error states with actionable guidance
+
+### Event Streaming ✅
+- JSONL event stream at `~/.ralph/events/stream`
+- Events: iteration_start, iteration_end, status, needs_input, progress
+- `ralph watch` for real-time TUI monitoring
+- `ralph watch --json` for raw JSONL (enables piping to other tools)
+
+### Workflow Orchestration ✅
+- YAML workflow definitions with `depends_on` arrays
+- `ralph run <workflow.yaml>` executes DAG-based workflows
+- `ralph run --dry-run` shows execution plan
+- Cycle detection prevents deadlock configurations
+- Parallel start of independent workstreams
+- Automatic sequencing based on dependencies
+
+### Impact on Web Platform Design
+These CLI features establish patterns that will be mirrored in the cloud:
+
+| CLI Feature | Cloud Equivalent |
+|-------------|------------------|
+| `~/.ralph/events/stream` | CloudWatch Logs + WebSocket Gateway |
+| `ralph watch` | Real-time log streaming in Web UI |
+| Workflow YAML | Database-stored workflow definitions |
+| `ralph note` | Workstream comments in UI |
+| Diagnostics | Health monitoring and alerting |
+
+---
+
 ## Architecture Overview
 
 ```
@@ -152,6 +189,11 @@ Full control from terminal via MCP:
 | `ralph-attach` | Get SSM session URL for SSH |
 | `ralph-projects` | List projects |
 | `ralph-project-create` | Create project with repos |
+| `ralph-watch` | Stream real-time events (JSONL) |
+| `ralph-run` | Execute workflow with dependencies |
+| `ralph-note` | Add/view workstream notes |
+
+**Note:** `ralph-watch`, `ralph-run`, and `ralph-note` are already implemented in the local CLI and can be exposed via MCP.
 
 ---
 
@@ -309,8 +351,15 @@ ralph/                           # Existing repo root
 ```
 
 ### Critical Files to Modify
-- `bin/ralph-loop.sh` - Adapt for cloud (S3 state, CloudWatch logs)
+- `bin/ralph-loop.sh` - Already has JSONL event streaming; adapt for cloud (S3 state, CloudWatch logs)
+- `bin/ralph` - Already has workflow orchestration; port DAG execution to cloud
 - `server/server.js` - Patterns to reference for API design
+
+### Local State Directories (Reference)
+The local CLI uses these directories that will have cloud equivalents:
+- `~/.ralph/events/` - Event stream (→ CloudWatch Logs)
+- `~/.ralph/workflows/` - Workflow definitions (→ Database)
+- `~/.ralph/state/<project>/<ws>/note` - Notes (→ Database)
 
 ---
 

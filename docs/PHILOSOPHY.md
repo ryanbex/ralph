@@ -291,6 +291,36 @@ Ralph is a step toward AI software engineering at scale:
 
 The patterns established here—isolation, autonomy, incremental progress, human review—scale to more sophisticated multi-agent systems.
 
+### Workflow Orchestration (Implemented)
+
+Ralph now supports declarative workflow definitions with dependency resolution:
+
+```yaml
+workstreams:
+  - name: auth
+    prompt: "Implement authentication"
+  - name: api
+    depends_on: [auth]  # waits for auth to complete
+```
+
+This enables:
+- **Parallel execution** of independent workstreams
+- **Automatic sequencing** based on dependencies
+- **Cycle detection** to prevent deadlocks
+- **Real-time monitoring** via event streaming
+
+A parent Claude session can spawn child workstreams and monitor their progress through the event stream—a step toward multi-agent coordination.
+
+### Event-Driven Observability
+
+Each workstream emits structured events (JSONL) that enable:
+- Real-time progress dashboards
+- Cost and token tracking
+- Anomaly detection (stuck workstreams)
+- Integration with external monitoring systems
+
+This decouples the execution from observation, allowing multiple consumers (CLI, web UI, other agents) to monitor the same workstreams.
+
 ## References
 
 - [Geoffrey Huntley's Ralph](https://ghuntley.com/ralph/) - The original Ralph concept
