@@ -9,6 +9,42 @@ This document provides a complete handoff for the Ralph project. Two major initi
 
 ---
 
+## Latest Session Update (2026-01-18)
+
+### Completed This Session
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Fly.io machines client | ✅ Done | `web/src/lib/fly/machines.ts` |
+| Start/Stop API routes | ✅ Done | `web/src/app/api/projects/[slug]/workstreams/[wsSlug]/start|stop/route.ts` |
+| SSE log streaming endpoint | ✅ Done | `web/src/app/api/projects/[slug]/workstreams/[wsSlug]/logs/route.ts` |
+| useWorkstreamLogs hook (SSE) | ✅ Done | Replaced WebSocket with EventSource |
+| WorkstreamControls component | ✅ Done | Start/Stop/Logs UI in one component |
+| Worker scripts updated | ✅ Done | `worker/entrypoint.sh`, `worker/ralph-loop-cloud.sh` |
+| fly.toml created | ✅ Done | `worker/fly.toml` |
+| Neon DB schema pushed | ✅ Done | Production database ready |
+| Vercel project created | ✅ Done | Named "ralph" (not "web") |
+| Vercel env vars (partial) | ✅ Done | DATABASE_URL, GITHUB_CLIENT_ID, AUTH_SECRET |
+| Flyctl authenticated | ✅ Done | Logged in as ryan@pray.com |
+
+### Blocked Items
+
+| Task | Blocker | Action Required |
+|------|---------|-----------------|
+| Vercel deployment | Missing GITHUB_CLIENT_SECRET | Add at https://vercel.com/100x646576-teams/ralph/settings/environment-variables |
+| Fly.io app creation | No billing | Add payment at https://fly.io/dashboard/ryan-beck/billing |
+| Worker deployment | No Fly.io app | After billing, run `fly apps create ralph-workers && fly deploy` |
+
+### Key Links
+
+- **Vercel Dashboard:** https://vercel.com/100x646576-teams/ralph
+- **Vercel Env Vars:** https://vercel.com/100x646576-teams/ralph/settings/environment-variables
+- **Fly.io Billing:** https://fly.io/dashboard/ryan-beck/billing
+- **Local Dev:** http://localhost:3000
+- **Plan File:** `/Users/ryanbeck/.claude/plans/agile-marinating-candy.md`
+
+---
+
 ## Part 1: CLI UX Enhancements (COMPLETE)
 
 ### What Was Built
@@ -244,51 +280,94 @@ workstreams (
 )
 ```
 
+### Deployment Status (Updated 2026-01-18)
+
+| Environment | URL | Status |
+|-------------|-----|--------|
+| **Local Dev** | http://localhost:3000 | ✅ Working |
+| **Vercel** | https://ralph-*.vercel.app | ⏳ Needs GITHUB_CLIENT_SECRET env var |
+| **Database** | Neon (Vercel Postgres) | ✅ Schema pushed |
+| **Fly.io** | ralph-workers | ⏳ Needs billing setup |
+
+**Vercel Project:** `100x646576-teams/ralph`
+- Dashboard: https://vercel.com/100x646576-teams/ralph
+- Env Vars: https://vercel.com/100x646576-teams/ralph/settings/environment-variables
+
 ### What's Left (MVP)
 
-| Task | Priority | Notes |
-|------|----------|-------|
-| Test Fly.io deployment end-to-end | HIGH | Deploy worker, verify it starts |
-| Verify log streaming works | HIGH | Test useWorkstreamLogs hook |
-| Test start/stop flow | HIGH | Verify machine lifecycle |
-| Error handling polish | MEDIUM | Better error messages in UI |
-| Environment variables setup | HIGH | FLY_API_TOKEN, etc. |
-| PROMPT.md upload to Blob | MEDIUM | Currently may be incomplete |
+| Task | Priority | Status | Notes |
+|------|----------|--------|-------|
+| Add GITHUB_CLIENT_SECRET to Vercel | HIGH | ⏳ Blocked | Add at Vercel env vars page |
+| Add billing to Fly.io | HIGH | ⏳ Blocked | https://fly.io/dashboard/ryan-beck/billing |
+| Create Fly.io app | HIGH | ⏳ Blocked on billing | `fly apps create ralph-workers` |
+| Deploy worker image to Fly.io | HIGH | ⏳ Blocked on app | `cd worker && fly deploy` |
+| Test Fly.io deployment end-to-end | HIGH | ⏳ | Deploy worker, verify it starts |
+| Verify log streaming works | HIGH | ⏳ | Test useWorkstreamLogs hook |
+| Test start/stop flow | HIGH | ⏳ | Verify machine lifecycle |
+| Create internal API routes | MEDIUM | ⏳ | Worker callbacks need `/api/internal/workstreams/[id]` |
+| PROMPT.md upload to Blob | MEDIUM | ⏳ | May need UI for uploading prompts |
 
-### Environment Variables Needed
+### Environment Variables
 
+**Vercel (Current Status):**
 ```bash
-# Vercel (.env.local)
-GITHUB_ID=xxx
-GITHUB_SECRET=xxx
-NEXTAUTH_SECRET=xxx
-NEXTAUTH_URL=http://localhost:3000
-POSTGRES_URL=xxx
-BLOB_READ_WRITE_TOKEN=xxx
-FLY_API_TOKEN=xxx
-FLY_APP_NAME=ralph-worker
+# ✅ Already Set
+DATABASE_URL=postgresql://neondb_owner:***@ep-lively-dawn-af6mwo7u-pooler...
+GITHUB_CLIENT_ID=Ov23lir69tzvNCajURx2
+AUTH_SECRET=DSZzIMbvl0TYv3jCsGXkgPSS14V7/Zfrv1hYnWN2DxE=
+# + All POSTGRES_* vars from Neon
 
-# Fly.io (set via fly secrets)
-ANTHROPIC_API_KEY=xxx  # Per-workstream from user
-GITHUB_TOKEN=xxx       # Per-workstream from user
+# ❌ Missing - MUST ADD
+GITHUB_CLIENT_SECRET=<from GitHub OAuth app>
+
+# ⏳ Optional (add after Fly.io setup)
+FLY_API_TOKEN=<from `fly tokens create deploy -x 999999h`>
+FLY_APP_NAME=ralph-workers
+```
+
+**Local (.env.local):**
+```bash
+DATABASE_URL=postgres://ralph:ralph_dev_password@localhost:5434/ralph_web
+GITHUB_CLIENT_ID=Ov23lir69tzvNCajURx2
+GITHUB_CLIENT_SECRET=<your secret>
+AUTH_SECRET=<your secret>
+```
+
+**Fly.io Worker (set via Machines API at runtime):**
+```bash
+WORKSTREAM_ID=<uuid>
+GITHUB_REPO_URL=<repo url>
+PROMPT_BLOB_URL=<vercel blob url>
+ANTHROPIC_API_KEY=<from user's settings>
+BASE_BRANCH=main
+MAX_ITERATIONS=20
+RALPH_API_URL=https://ralph-*.vercel.app
 ```
 
 ### Key Files
 
 **Web Frontend:**
 - `web/src/app/projects/[slug]/workstreams/[wsSlug]/page.tsx` - Workstream detail page
-- `web/src/components/WorkstreamControls.tsx` - Start/Stop buttons
-- `web/src/components/LogViewer.tsx` - Real-time log display
-- `web/src/hooks/useWorkstreamLogs.ts` - Log streaming hook
-- `web/src/lib/fly/machines.ts` - Fly.io machine management
-- `web/src/lib/fly/logs.ts` - Fly.io log streaming
-- `web/src/lib/db/schema.ts` - Database schema
+- `web/src/app/api/projects/[slug]/workstreams/[wsSlug]/start/route.ts` - Start workstream API
+- `web/src/app/api/projects/[slug]/workstreams/[wsSlug]/stop/route.ts` - Stop workstream API
+- `web/src/app/api/projects/[slug]/workstreams/[wsSlug]/logs/route.ts` - SSE log streaming
+- `web/src/components/WorkstreamControls.tsx` - Start/Stop/Logs UI component
+- `web/src/components/LogViewer.tsx` - Real-time log display (pixel-themed)
+- `web/src/hooks/useWorkstreamLogs.ts` - SSE-based log streaming hook
+- `web/src/lib/fly/machines.ts` - Fly.io Machines API client
+- `web/src/lib/fly/logs.ts` - SSE log streaming helpers (LogStream class)
+- `web/src/lib/db/schema.ts` - Drizzle ORM schema
+- `web/vercel.json` - Vercel build config
 
 **Worker:**
-- `worker/Dockerfile` - Container image
-- `worker/fly.toml` - Fly.io config
-- `worker/entrypoint.sh` - Startup script
-- `worker/ralph-loop-cloud.sh` - Iteration engine
+- `worker/Dockerfile` - Ubuntu + Node.js 20 + Claude Code CLI
+- `worker/fly.toml` - Fly.io machine config (ralph-workers app)
+- `worker/entrypoint.sh` - Clones repo, downloads PROMPT.md, starts loop
+- `worker/ralph-loop-cloud.sh` - Cloud iteration engine with API callbacks
+
+**Config:**
+- `web/drizzle.config.ts` - Drizzle configuration (loads .env.local)
+- `docker-compose.yml` - Local PostgreSQL on port 5434
 
 ---
 
@@ -361,42 +440,75 @@ ralph/
 
 ## How to Continue
 
-### Testing Fly.io Integration
+### Immediate Next Steps
 
-1. **Set up Fly.io:**
+1. **Add GITHUB_CLIENT_SECRET to Vercel:**
+   - Go to: https://vercel.com/100x646576-teams/ralph/settings/environment-variables
+   - Add `GITHUB_CLIENT_SECRET` with the value from your GitHub OAuth app
+   - Redeploy: `cd web && vercel --prod`
+
+2. **Set up Fly.io billing:**
+   - Go to: https://fly.io/dashboard/ryan-beck/billing
+   - Add a payment method
+
+3. **Create and deploy Fly.io app:**
    ```bash
    cd worker
-   fly auth login
-   fly apps create ralph-worker
-   fly deploy
+   fly apps create ralph-workers
+   fly deploy --build-only  # Build and push image to registry
    ```
 
-2. **Set environment variables in Vercel:**
-   - Add `FLY_API_TOKEN` and `FLY_APP_NAME`
+4. **Get Fly.io API token and add to Vercel:**
+   ```bash
+   fly tokens create deploy -x 999999h
+   # Copy the token and add to Vercel:
+   # FLY_API_TOKEN=<token>
+   # FLY_APP_NAME=ralph-workers
+   ```
 
-3. **Test the flow:**
-   - Create a project in the web UI
-   - Create a workstream
-   - Click "Start"
-   - Verify machine starts in Fly.io
-   - Verify logs stream to UI
-   - Click "Stop"
-   - Verify machine stops
+5. **Test the full flow:**
+   - Go to https://ralph-*.vercel.app (after deploy succeeds)
+   - Sign in with GitHub
+   - Create a project
+   - Create a workstream with a PROMPT.md
+   - Click "Start" - verify Fly machine starts
+   - Watch logs stream in real-time
+   - Click "Stop" - verify machine stops
+
+### Missing API Routes (TODO)
+
+The worker scripts call these internal API routes that may need to be created:
+- `PATCH /api/internal/workstreams/[id]` - Update status, iteration, etc.
+- `PUT /api/internal/workstreams/[id]/progress` - Upload PROGRESS.md
+- `GET /api/internal/workstreams/[id]` - Get workstream (for answer polling)
 
 ### Local Development
 
 ```bash
-# Web frontend
-cd web
-npm install
-npm run dev
+# Start local PostgreSQL
+docker-compose up -d
 
-# Database (if needed)
-docker-compose up -d  # Starts local PostgreSQL
-npm run db:push       # Push schema to DB
+# Install dependencies and start dev server
+cd web
+pnpm install
+pnpm run dev
+
+# Push schema to local DB
+pnpm run db:push
+
+# Open Drizzle Studio to inspect DB
+pnpm run db:studio
 ```
 
-### CLI Testing
+### Vercel Deployment
+
+```bash
+cd web
+vercel           # Preview deployment
+vercel --prod    # Production deployment
+```
+
+### CLI Testing (Local Ralph)
 
 ```bash
 # Test new commands

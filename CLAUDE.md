@@ -268,9 +268,56 @@ Execution automatically parallelizes independent workstreams:
 - `api` starts when both complete
 - `dashboard` starts when `api` completes
 
+## Ralph Web Platform (IN DEVELOPMENT)
+
+A cloud-native web interface for Ralph using Vercel + Fly.io.
+
+### Directory Structure
+```
+ralph/
+├── web/                    # Next.js frontend (Vercel)
+│   ├── src/app/           # App router pages & API routes
+│   ├── src/components/    # React components (8-bit pixel theme)
+│   ├── src/hooks/         # useWorkstreamLogs, etc.
+│   └── src/lib/           # db (Drizzle), fly (Machines API), auth
+├── worker/                 # Fly.io container
+│   ├── Dockerfile         # Ubuntu + Claude Code + Git
+│   ├── fly.toml           # Fly.io config
+│   ├── entrypoint.sh      # Startup script
+│   └── ralph-loop-cloud.sh # Cloud iteration engine
+└── docker-compose.yml     # Local PostgreSQL
+```
+
+### Local Development
+```bash
+# Start local PostgreSQL
+docker-compose up -d
+
+# Start web dev server
+cd web
+pnpm install
+pnpm run dev         # http://localhost:3000
+pnpm run db:push     # Push schema to DB
+pnpm run db:studio   # Drizzle Studio
+```
+
+### Deployment
+```bash
+# Vercel (frontend)
+cd web && vercel --prod
+
+# Fly.io (workers)
+cd worker && fly deploy
+```
+
+### Key Documentation
+- [Handoff Doc](docs/roadmaps/2026-01-HANDOFF.md) - Current status & next steps
+- [Plan File](~/.claude/plans/agile-marinating-candy.md) - Full technical spec
+
 ## Links
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Philosophy](docs/PHILOSOPHY.md)
 - [Commands Reference](skills/COMMANDS.md)
 - [Workflows](skills/WORKFLOWS.md)
+- [Web Platform Handoff](docs/roadmaps/2026-01-HANDOFF.md)
