@@ -5,13 +5,24 @@
 This document provides a complete handoff for the Ralph project. Two major initiatives were completed/in-progress:
 
 1. **CLI UX Enhancements** ✅ COMPLETE - Event streaming, workflow orchestration, notes
-2. **Ralph Web Platform** 🔄 IN PROGRESS - Fly.io integration for cloud workstreams
+2. **Ralph Web Platform** 🔄 IN PROGRESS - Vercel deployed, GitHub OAuth working, Fly.io blocked on billing
+
+**Current Production URL:** https://ralph-12lb2gjti-100x646576-teams.vercel.app
 
 ---
 
-## Latest Session Update (2026-01-18)
+## Latest Session Update (2026-01-19)
 
 ### Completed This Session
+
+| Task | Status | Notes |
+|------|--------|-------|
+| GitHub OAuth App created | ✅ Done | Client ID: `Ov23lijuRYQ6nKJ8QIIF` |
+| GITHUB_CLIENT_SECRET added to Vercel | ✅ Done | OAuth fully configured |
+| Vercel production deployment | ✅ Done | Build successful, all env vars set |
+| GitHub OAuth functional | ✅ Done | Sign-in should work now |
+
+### Previous Session (2026-01-18)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -24,19 +35,18 @@ This document provides a complete handoff for the Ralph project. Two major initi
 | fly.toml created | ✅ Done | `worker/fly.toml` |
 | Neon DB schema pushed | ✅ Done | Production database ready |
 | Vercel project created | ✅ Done | Named "ralph" (not "web") |
-| Vercel env vars (partial) | ✅ Done | DATABASE_URL, GITHUB_CLIENT_ID, AUTH_SECRET |
 | Flyctl authenticated | ✅ Done | Logged in as ryan@pray.com |
 
 ### Blocked Items
 
 | Task | Blocker | Action Required |
 |------|---------|-----------------|
-| Vercel deployment | Missing GITHUB_CLIENT_SECRET | Add at https://vercel.com/100x646576-teams/ralph/settings/environment-variables |
 | Fly.io app creation | No billing | Add payment at https://fly.io/dashboard/ryan-beck/billing |
 | Worker deployment | No Fly.io app | After billing, run `fly apps create ralph-workers && fly deploy` |
 
 ### Key Links
 
+- **Production URL:** https://ralph-12lb2gjti-100x646576-teams.vercel.app
 - **Vercel Dashboard:** https://vercel.com/100x646576-teams/ralph
 - **Vercel Env Vars:** https://vercel.com/100x646576-teams/ralph/settings/environment-variables
 - **Fly.io Billing:** https://fly.io/dashboard/ryan-beck/billing
@@ -280,13 +290,14 @@ workstreams (
 )
 ```
 
-### Deployment Status (Updated 2026-01-18)
+### Deployment Status (Updated 2026-01-19)
 
 | Environment | URL | Status |
 |-------------|-----|--------|
 | **Local Dev** | http://localhost:3000 | ✅ Working |
-| **Vercel** | https://ralph-*.vercel.app | ⏳ Needs GITHUB_CLIENT_SECRET env var |
+| **Vercel Production** | https://ralph-12lb2gjti-100x646576-teams.vercel.app | ✅ Deployed |
 | **Database** | Neon (Vercel Postgres) | ✅ Schema pushed |
+| **GitHub OAuth** | NextAuth | ✅ Configured |
 | **Fly.io** | ralph-workers | ⏳ Needs billing setup |
 
 **Vercel Project:** `100x646576-teams/ralph`
@@ -297,7 +308,6 @@ workstreams (
 
 | Task | Priority | Status | Notes |
 |------|----------|--------|-------|
-| Add GITHUB_CLIENT_SECRET to Vercel | HIGH | ⏳ Blocked | Add at Vercel env vars page |
 | Add billing to Fly.io | HIGH | ⏳ Blocked | https://fly.io/dashboard/ryan-beck/billing |
 | Create Fly.io app | HIGH | ⏳ Blocked on billing | `fly apps create ralph-workers` |
 | Deploy worker image to Fly.io | HIGH | ⏳ Blocked on app | `cd worker && fly deploy` |
@@ -309,18 +319,16 @@ workstreams (
 
 ### Environment Variables
 
-**Vercel (Current Status):**
+**Vercel (Current Status - All Set):**
 ```bash
-# ✅ Already Set
+# ✅ All Required Vars Set
 DATABASE_URL=postgresql://neondb_owner:***@ep-lively-dawn-af6mwo7u-pooler...
-GITHUB_CLIENT_ID=Ov23lir69tzvNCajURx2
-AUTH_SECRET=DSZzIMbvl0TYv3jCsGXkgPSS14V7/Zfrv1hYnWN2DxE=
+GITHUB_CLIENT_ID=Ov23lijuRYQ6nKJ8QIIF
+GITHUB_CLIENT_SECRET=a950e9065ab1f593175f6e8c6b19c9c768a02e97
+AUTH_SECRET=<encrypted>
 # + All POSTGRES_* vars from Neon
 
-# ❌ Missing - MUST ADD
-GITHUB_CLIENT_SECRET=<from GitHub OAuth app>
-
-# ⏳ Optional (add after Fly.io setup)
+# ⏳ Add after Fly.io setup
 FLY_API_TOKEN=<from `fly tokens create deploy -x 999999h`>
 FLY_APP_NAME=ralph-workers
 ```
@@ -442,10 +450,10 @@ ralph/
 
 ### Immediate Next Steps
 
-1. **Add GITHUB_CLIENT_SECRET to Vercel:**
-   - Go to: https://vercel.com/100x646576-teams/ralph/settings/environment-variables
-   - Add `GITHUB_CLIENT_SECRET` with the value from your GitHub OAuth app
-   - Redeploy: `cd web && vercel --prod`
+1. **Test GitHub OAuth:**
+   - Go to: https://ralph-12lb2gjti-100x646576-teams.vercel.app
+   - Sign in with GitHub
+   - Verify you land on the dashboard
 
 2. **Set up Fly.io billing:**
    - Go to: https://fly.io/dashboard/ryan-beck/billing
@@ -462,13 +470,13 @@ ralph/
    ```bash
    fly tokens create deploy -x 999999h
    # Copy the token and add to Vercel:
-   # FLY_API_TOKEN=<token>
-   # FLY_APP_NAME=ralph-workers
+   vercel env add FLY_API_TOKEN production
+   vercel env add FLY_APP_NAME production  # value: ralph-workers
+   vercel --prod  # Redeploy
    ```
 
 5. **Test the full flow:**
-   - Go to https://ralph-*.vercel.app (after deploy succeeds)
-   - Sign in with GitHub
+   - Sign in at https://ralph-12lb2gjti-100x646576-teams.vercel.app
    - Create a project
    - Create a workstream with a PROMPT.md
    - Click "Start" - verify Fly machine starts
